@@ -15,3 +15,6 @@ export function formatDuration(hours: number | null): string {
 
 const dtf = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
 export const formatDate = (iso?: string | null) => (iso ? dtf.format(new Date(iso)) : '—')
+
+/** URL absoluta da API pela origem (sem usuário:senha que o navegador recusaria em fetch). */
+export const apiUrl = (path: string) => new URL(path, window.location.origin).toString()

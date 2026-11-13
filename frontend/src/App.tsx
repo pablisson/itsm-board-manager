@@ -1,8 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BoardResponse, BoardTicket, TechnicianLane } from './types'
-import { formatDate, formatDuration, hoursBetween } from './format'
+import { apiUrl, formatDate, formatDuration, hoursBetween } from './format'
+import { entityKey, placedTickets, shortEntity } from './entity'
+import EntitiesView from './views/EntitiesView'
+import MonthlyReportView from './views/MonthlyReportView'
 
 type Thresholds = { warn: number; crit: number }
+type Tab = 'board' | 'entidades' | 'relatorio'
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'board', label: 'Board' }, { id: 'entidades', label: 'Entidades' }, { id: 'relatorio', label: 'Relatório mensal' },
+]
+const readTab = (): Tab => { const h = location.hash.replace('#', ''); return TABS.some(t => t.id === h) ? h as Tab : 'board' }
+
+function useTab(): [Tab, (t: Tab) => void] {
+  const [tab, setTab] = useState<Tab>(readTab)
+  useEffect(() => { const f = () => setTab(readTab()); window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f) }, [])
+  return [tab, (t: Tab) => { location.hash = t; setTab(t) }]
+}
 
 function useNow(intervalMs = 60_000) {
   const [now, setNow] = useState(() => new Date())
@@ -16,12 +30,14 @@ export default function App() {
   const [requestError, setRequestError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
+  const [entity, setEntity] = useState('')
+  const [tab, setTab] = useTab()
   const now = useNow()
 
   const load = useCallback(async (force: boolean) => {
     setLoading(true); setRequestError(null); setNotice(null)
     try {
-      const res = await fetch(force ? '/api/board/refresh' : '/api/board', { method: force ? 'POST' : 'GET', credentials: 'same-origin' })
+      const res = await fetch(apiUrl(force ? '/api/board/refresh' : '/api/board'), { method: force ? 'POST' : 'GET', credentials: 'same-origin' })
       const body = await res.json().catch(() => null)
       if (!res.ok) throw new Error(body?.errors?.join(' ') ?? `HTTP ${res.status}`)
       const r = body as BoardResponse
@@ -37,18 +53,31 @@ export default function App() {
   const snap = data?.snapshot ?? null
   const th: Thresholds = { warn: snap?.ageWarnHours ?? 72, crit: snap?.ageCriticalHours ?? 168 }
 
-  const match = useMemo(() => {
+  // filtro de texto (todas as abas do board)
+  const textMatch = useMemo(() => {
     const q = filter.trim().toLowerCase()
     if (!q) return () => true
     return (t: BoardTicket) =>
       `#${t.id} ${t.title} ${t.category ?? ''} ${t.entity ?? ''} ${t.technicians.map(x => x.name).join(' ')} ${t.assignedGroups.join(' ')}`
         .toLowerCase().includes(q)
   }, [filter])
+  // texto + entidade selecionada (Board)
+  const match = useMemo(() => (t: BoardTicket) => textMatch(t) && (!entity || entityKey(t) === entity), [textMatch, entity])
+
+  const entities = useMemo(() => {
+    if (!snap) return []
+    const m = new Map<string, number>()
+    for (const p of placedTickets(snap)) m.set(entityKey(p.ticket), (m.get(entityKey(p.ticket)) ?? 0) + 1)
+    return [...m.entries()].sort((a, b) => shortEntity(a[0]).localeCompare(shortEntity(b[0])))
+  }, [snap])
 
   const cols = snap?.columns
+  const filtering = !!filter || !!entity
   const lanes = (cols?.inProgress ?? [])
     .map(l => ({ ...l, tickets: l.tickets.filter(match) }))
-    .filter(l => l.tickets.length > 0 || !filter)
+    .filter(l => l.tickets.length > 0 || !filtering)
+
+  const isBoardData = tab !== 'relatorio'
 
   return (
     <div className="app">
@@ -61,24 +90,40 @@ export default function App() {
           </p>
         </div>
         <div className="actions">
-          <input type="search" placeholder="Filtrar: #id, título, técnico, grupo…" value={filter} onChange={e => setFilter(e.target.value)} />
-          <button className="primary" onClick={() => load(true)} disabled={loading}>
-            {loading ? 'Sincronizando…' : '⟳ Ressincronizar'}
-          </button>
+          <input type="search" placeholder={isBoardData ? 'Filtrar: #id, título, técnico, grupo, entidade…' : 'Filtrar entidade…'} value={filter} onChange={e => setFilter(e.target.value)} />
+          {isBoardData && (
+            <select value={entity} onChange={e => setEntity(e.target.value)} aria-label="Entidade">
+              <option value="">Todas as entidades</option>
+              {entities.map(([e, n]) => <option key={e} value={e} title={e}>{shortEntity(e)} ({n})</option>)}
+            </select>
+          )}
+          {isBoardData && (
+            <button className="primary" onClick={() => load(true)} disabled={loading}>
+              {loading ? 'Sincronizando…' : '⟳ Ressincronizar'}
+            </button>
+          )}
         </div>
       </header>
 
-      {requestError && <div className="banner error">Falha ao consultar o board: {requestError}</div>}
-      {data?.lastError && <div className="banner error">Última sincronização com o ITSM falhou ({formatDate(data.lastErrorAtUtc)}): {data.lastError}{snap && ' — exibindo a última leitura válida.'}</div>}
-      {notice && <div className="banner info">{notice}</div>}
-      {snap && snap.warnings.length > 0 && (
+      <nav className="tabs" role="tablist">
+        {TABS.map(t => <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>{t.label}</button>)}
+      </nav>
+
+      {tab === 'relatorio' && <MonthlyReportView filter={filter} />}
+
+      {isBoardData && requestError && <div className="banner error">Falha ao consultar o board: {requestError}</div>}
+      {isBoardData && data?.lastError && <div className="banner error">Última sincronização com o ITSM falhou ({formatDate(data.lastErrorAtUtc)}): {data.lastError}{snap && ' — exibindo a última leitura válida.'}</div>}
+      {isBoardData && notice && <div className="banner info">{notice}</div>}
+      {isBoardData && snap && snap.warnings.length > 0 && (
         <details className="banner warn">
           <summary>{snap.warnings.length} aviso(s) de configuração/dados</summary>
           <ul>{snap.warnings.map(w => <li key={w}>{w}</li>)}</ul>
         </details>
       )}
 
-      {snap && cols && (
+      {tab === 'entidades' && snap && <EntitiesView snap={snap} match={textMatch} now={now} entity={entity} onEntity={setEntity} />}
+
+      {tab === 'board' && snap && cols && (
         <>
           <section className="kpis">
             <Kpi label="Sem atribuição" value={snap.totals.unassigned} tone="amber" />
@@ -115,7 +160,8 @@ export default function App() {
           </main>
         </>
       )}
-      {!snap && !loading && !requestError && !data?.lastError && <p className="empty center">Sem dados.</p>}
+      {isBoardData && !snap && loading && <p className="empty center">Sincronizando com o ITSM…</p>}
+      {isBoardData && !snap && !loading && !requestError && !data?.lastError && <p className="empty center">Sem dados.</p>}
       <footer>Tempo aberto = tempo corrido desde a abertura do chamado (24×7), não SLA/horário útil. Dados lidos diretamente do ITSM; nada é estimado.</footer>
     </div>
   )
@@ -184,6 +230,7 @@ function Card({ t, now, th, done, showTech, showGroups, coTechs }: {
       </div>
       <h3 title={t.title}>{t.title}</h3>
       <dl>
+        <dt>Entidade</dt><dd title={t.entity ?? ''} className="entity">{shortEntity(t.entity)}</dd>
         {t.category && <><dt>Categoria</dt><dd>{t.category}</dd></>}
         {showTech && <><dt>Técnico</dt><dd>{t.technicians.length ? t.technicians.map(x => x.name).join(', ') : <i>não atribuído</i>}</dd></>}
         {coTechs && coTechs.length > 0 && <><dt>Divide com</dt><dd>{coTechs.map(x => x.name).join(', ')}</dd></>}

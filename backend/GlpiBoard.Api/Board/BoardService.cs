@@ -57,33 +57,44 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
         var throttled = (now - _lastAttempt).TotalSeconds < settings.RefreshMinIntervalSeconds;
 
         var shouldSync = (force || !fresh) && !throttled;
-        if (shouldSync)
+        if (shouldSync && !force && _snapshot is not null)
         {
-            await _syncLock.WaitAsync(ct);
-            try
-            {
-                // outra requisição pode ter sincronizado enquanto aguardávamos
-                if ((DateTimeOffset.UtcNow - _lastAttempt).TotalSeconds >= settings.RefreshMinIntervalSeconds)
-                {
-                    _lastAttempt = DateTimeOffset.UtcNow;
-                    try
-                    {
-                        _snapshot = await BuildSnapshotAsync(ct);
-                        _lastError = null; _lastErrorAt = null;
-                    }
-                    catch (Exception ex) when (ex is GlpiException or HttpRequestException or TaskCanceledException or JsonException)
-                    {
-                        log.LogWarning("Sincronização com GLPI falhou: {Message}", ex.Message);
-                        _lastError = ex is TaskCanceledException ? "Tempo esgotado ao consultar o ITSM." : ex.Message;
-                        _lastErrorAt = DateTimeOffset.UtcNow;
-                    }
-                }
-            }
-            finally { _syncLock.Release(); }
+            // Cache expirado, mas há snapshot: responde na hora e atualiza em segundo plano
+            // (a leitura completa no GLPI leva dezenas de segundos).
+            _ = Task.Run(() => SyncAsync(waitForLock: false, CancellationToken.None));
+        }
+        else if (shouldSync)
+        {
+            // sem CancellationToken da requisição: se o navegador desistir, a leitura termina e fica em cache
+            await SyncAsync(waitForLock: true, CancellationToken.None);
         }
 
         var stale = _snapshot is null || (DateTimeOffset.UtcNow - _snapshot.SyncedAtUtc).TotalSeconds >= settings.CacheSeconds || _lastError is not null;
         return new BoardResponse(_snapshot, _lastError, _lastErrorAt, stale, force && throttled ? settings.RefreshMinIntervalSeconds : null);
+    }
+
+    private async Task SyncAsync(bool waitForLock, CancellationToken ct)
+    {
+        if (waitForLock) await _syncLock.WaitAsync(ct);
+        else if (!await _syncLock.WaitAsync(0, ct)) return; // já há uma sincronização em andamento
+        try
+        {
+            // outra requisição pode ter sincronizado enquanto aguardávamos
+            if ((DateTimeOffset.UtcNow - _lastAttempt).TotalSeconds < settings.RefreshMinIntervalSeconds) return;
+            _lastAttempt = DateTimeOffset.UtcNow;
+            try
+            {
+                _snapshot = await BuildSnapshotAsync(ct);
+                _lastError = null; _lastErrorAt = null;
+            }
+            catch (Exception ex) when (ex is GlpiException or HttpRequestException or TaskCanceledException or JsonException)
+            {
+                log.LogWarning("Sincronização com GLPI falhou: {Message}", ex.Message);
+                _lastError = ex is TaskCanceledException ? "Tempo esgotado ao consultar o ITSM." : ex.Message;
+                _lastErrorAt = DateTimeOffset.UtcNow;
+            }
+        }
+        finally { _syncLock.Release(); }
     }
 
     private async Task<BoardSnapshot> BuildSnapshotAsync(CancellationToken ct)
@@ -309,7 +320,7 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
     }
 
     /// <summary>A busca do GLPI pode devolver "&#62;" como separador de hierarquia (ex.: "TI &#62; Rede").</summary>
-    private static string? CleanDropdown(string? s) => s is null ? null : System.Net.WebUtility.HtmlDecode(s);
+    private static string? CleanDropdown(string? s) => s is null ? null : System.Net.WebUtility.HtmlDecode(s).Replace(' ', ' ').Trim();
 
     private static DateTimeOffset? ToUtc(string? glpiLocal, BoardSettings st)
     {

@@ -77,3 +77,56 @@ footer { margin-top: 12px; font-size: 12px; color: var(--muted); }
   input[type=search] { min-width: 0; flex: 1; }
   .actions { width: 100%; }
 }
+
+/* ---- abas / controles ---- */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-x: auto; }
+.tabs button { background: none; border: 0; border-bottom: 3px solid transparent; padding: 8px 14px; font: inherit; font-weight: 600; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.tabs button:hover { color: var(--text); }
+.tabs button.on { color: var(--blue); border-bottom-color: var(--blue); }
+select, .actions > button:not(.primary) { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; max-width: 280px; }
+.actions > button:not(.primary) { cursor: pointer; font-weight: 600; }
+.actions > button:disabled { opacity: .5; cursor: default; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); flex-wrap: wrap; }
+.seg button { border: 0; background: none; padding: 6px 10px; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; border-right: 1px solid var(--border); }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--blue-bg); color: var(--blue); font-weight: 600; }
+.muted { color: var(--muted); font-weight: 400; }
+dd.entity { font-weight: 600; }
+
+/* ---- painéis / tabelas ---- */
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 12px; align-items: start; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; min-width: 0; }
+.panel-head { margin-bottom: 10px; }
+.panel-head.row { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: flex-start; }
+.panel-head h2 { font-size: 16px; margin: 0; }
+.panel-head p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.panel .kpis { margin-top: 4px; }
+.table-wrap { overflow: auto; max-height: calc(100vh - 260px); border: 1px solid var(--border); border-radius: 8px; }
+.table-wrap.report { max-height: calc(100vh - 340px); }
+table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+.grid th, .grid td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.grid th { position: sticky; top: 0; background: var(--surface-2); font-size: 12px; color: var(--muted); font-weight: 600; z-index: 1; }
+.grid .left { text-align: left; }
+.grid td.left { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.split .panel:first-child .grid th, .split .panel:first-child .grid td { padding: 6px 8px; }
+.split .panel:first-child .grid td.left { max-width: 220px; }
+.grid td.title { max-width: 360px; }
+.grid td.zero { color: var(--muted); opacity: .5; }
+.grid td.strong { font-weight: 700; }
+.grid tbody tr:hover { background: var(--surface-2); }
+.split .panel:first-child tbody tr { cursor: pointer; }
+.grid tr.selected td { background: var(--blue-bg); }
+.grid tfoot td { position: sticky; bottom: 0; background: var(--surface-2); font-weight: 700; border-top: 2px solid var(--border); border-bottom: 0; }
+.grid .sticky { position: sticky; left: 0; background: var(--surface); z-index: 2; }
+.grid th.sticky, .grid tfoot .sticky { background: var(--surface-2); z-index: 3; }
+.grid.heat td:not(.left):not(.strong) { min-width: 56px; }
+.th-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 5px; }
+.tag { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600; background: var(--cbg); color: var(--c); }
+.grid .empty { text-align: center; }
+
+@media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }
+@media (max-width: 720px) {
+  select { max-width: none; flex: 1; }
+  .grid td.left { max-width: 180px; }
+  .table-wrap, .table-wrap.report { max-height: none; }
+}

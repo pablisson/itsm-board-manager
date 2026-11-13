@@ -20,3 +20,9 @@ export interface BoardResponse {
   snapshot: BoardSnapshot | null; lastError: string | null; lastErrorAtUtc: string | null
   stale: boolean; throttledSeconds?: number | null
 }
+export interface MonthlyEntityRow { entity: string; counts: number[]; total: number }
+export interface MonthlyReport {
+  generatedAtUtc: string; durationMs: number; months: string[]
+  rows: MonthlyEntityRow[]; monthTotals: number[]; grandTotal: number
+}
+export interface MonthlyReportResponse { report: MonthlyReport | null; error: string | null; throttledSeconds?: number | null }

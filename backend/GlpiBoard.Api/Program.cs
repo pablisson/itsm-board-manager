@@ -14,6 +14,7 @@ builder.Services.AddHttpClient("glpi", c => c.Timeout = TimeSpan.FromSeconds(60)
 builder.Services.AddSingleton(sp => new GlpiClient(
     sp.GetRequiredService<IHttpClientFactory>().CreateClient("glpi"), settings, sp.GetRequiredService<ILogger<GlpiClient>>()));
 builder.Services.AddSingleton<BoardService>();
+builder.Services.AddSingleton<ReportService>();
 
 var app = builder.Build();
 var log = app.Logger;
@@ -74,6 +75,12 @@ app.MapPost("/api/board/refresh", async (BoardService b, CancellationToken ct) =
 {
     if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });
     return Results.Ok(await b.GetAsync(true, ct));
+});
+
+app.MapGet("/api/reports/monthly", async (ReportService r, int? months, bool? refresh, CancellationToken ct) =>
+{
+    if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });
+    return Results.Ok(await r.GetMonthlyAsync(months ?? 12, refresh == true, ct));
 });
 
 app.MapFallbackToFile("index.html");
