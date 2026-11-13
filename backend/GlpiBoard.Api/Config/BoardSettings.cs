@@ -23,6 +23,14 @@ public sealed class BoardSettings
     public string? AuthPassword { get; init; }            // BOARD_AUTH_PASSWORD
     public bool AuthDisabled { get; init; }               // BOARD_AUTH_DISABLED=true (só para rede interna)
 
+    // --- Banco do planejamento (PostgreSQL) ---
+    public string? PlanDbHost { get; init; }              // PLAN_DB_HOST
+    public int PlanDbPort { get; init; } = 5432;          // PLAN_DB_PORT
+    public string PlanDbName { get; init; } = "board";    // PLAN_DB_NAME
+    public string PlanDbUser { get; init; } = "board";    // PLAN_DB_USER
+    public string? PlanDbPassword { get; init; }          // PLAN_DB_PASSWORD
+    public bool PlanDbConfigured => !string.IsNullOrWhiteSpace(PlanDbHost) && !string.IsNullOrEmpty(PlanDbPassword);
+
     public bool UsesUserToken => !string.IsNullOrWhiteSpace(UserToken);
     public bool UsesCredentials => !UsesUserToken && !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
     public bool AuthConfigured => !string.IsNullOrWhiteSpace(AuthUser) && !string.IsNullOrWhiteSpace(AuthPassword);
@@ -71,6 +79,11 @@ public sealed class BoardSettings
             AuthUser = S("BOARD_AUTH_USER"),
             AuthPassword = c["BOARD_AUTH_PASSWORD"],
             AuthDisabled = string.Equals(S("BOARD_AUTH_DISABLED"), "true", StringComparison.OrdinalIgnoreCase),
+            PlanDbHost = S("PLAN_DB_HOST"),
+            PlanDbPort = I("PLAN_DB_PORT", 5432),
+            PlanDbName = S("PLAN_DB_NAME") ?? "board",
+            PlanDbUser = S("PLAN_DB_USER") ?? "board",
+            PlanDbPassword = c["PLAN_DB_PASSWORD"],
         };
     }
 

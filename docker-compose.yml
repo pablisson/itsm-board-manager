@@ -1,0 +1,42 @@
+# Board ITSM + banco do planejamento (PostgreSQL).
+#   Subir/atualizar:  docker compose up -d --build
+#   Parar:            docker compose down          (os dados do planejamento são mantidos)
+#   ATENÇÃO: nunca use "docker compose down -v" — o -v apaga o volume com os dados.
+#   Backup:           docker compose exec db pg_dump -U board board > backup-planejamento.sql
+name: itsm-board
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PLAN_DB_NAME:-board}
+      POSTGRES_USER: ${PLAN_DB_USER:-board}
+      POSTGRES_PASSWORD: ${PLAN_DB_PASSWORD:?defina PLAN_DB_PASSWORD no .env}
+      TZ: America/Sao_Paulo
+    volumes:
+      - plan-data:/var/lib/postgresql/data   # volume nomeado: sobrevive a restart, down e rebuild
+    ports:
+      - "127.0.0.1:${PLAN_DB_PORT:-5433}:5432" # só na máquina local (app fora do Docker / backup)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  board:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PLAN_DB_HOST: db
+      PLAN_DB_PORT: "5432"
+    ports:
+      - "5080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  plan-data:
+    name: itsm-board-plan-data

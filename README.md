@@ -98,7 +98,24 @@ Para desenvolver o front com hot reload, rode `npm run dev` em `frontend/` com o
 | GLPI só na rede interna | Publicar no **IIS de um servidor interno** e expor via proxy reverso com HTTPS ou via VPN |
 | GLPI acessível pela internet | **Azure App Service**, Render, Railway, Fly.io ou uma VM com Docker |
 
-**Docker** (qualquer host):
+**Docker Compose** (recomendado — app + banco do Planejamento):
+```bash
+docker compose up -d --build
+```
+O board sobe em `http://localhost:5080` e o PostgreSQL do Planejamento fica no volume nomeado `itsm-board-plan-data`.
+Os dados sobrevivem a restart, `docker compose down`, rebuild e reinício da máquina (os dois serviços usam `restart: unless-stopped`).
+Defina `PLAN_DB_PASSWORD` no `.env` antes da primeira subida.
+
+> ⚠️ **Nunca** use `docker compose down -v`: o `-v` apaga o volume com o planejamento.
+
+Backup e restauração do planejamento:
+```bash
+docker compose exec -T db pg_dump -U board board > backup-planejamento.sql
+docker compose exec -T db psql -U board -d board < backup-planejamento.sql
+```
+Para rodar o app fora do Docker (desenvolvimento), suba só o banco com `docker compose up -d db`. O app usa `PLAN_DB_HOST=localhost` e `PLAN_DB_PORT=5433`.
+
+**Docker sem compose** (sem a aba Planejamento, ou com um PostgreSQL externo via `PLAN_DB_*`):
 ```bash
 docker build -t glpi-board .
 ```
@@ -113,6 +130,9 @@ Coloque um proxy com HTTPS na frente (Nginx, Caddy, Traefik ou o TLS do próprio
 
 ## 6. Endpoints
 - `GET /api/board`: snapshot em cache (`BOARD_CACHE_SECONDS`).
+- `GET /api/plan?month=AAAA-MM`: itens planejados do mês (técnico × dia), mais a contagem de dias planejados por ticket.
+- `POST /api/plan` `{techId, techName, ticketId, title, day}`: planeja um ticket num dia. `PUT /api/plan/{id}` `{day}` move o item. `DELETE /api/plan/{id}` remove o item.
+- `GET /api/plan/health`: diz se o banco do planejamento está configurado e acessível.
 - `POST /api/board/refresh`: botão **Ressincronizar**. Força a leitura no GLPI, com no máximo 1 leitura a cada `BOARD_REFRESH_MIN_INTERVAL_SECONDS` para proteger o GLPI.
 - `GET /api/config-status`: diagnóstico da configuração (sem valores).
 - `GET /healthz`: health check público.

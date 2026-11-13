@@ -5,6 +5,7 @@ import { entityKey, placedTickets, shortEntity } from './entity'
 import EntitiesView from './views/EntitiesView'
 import MonthlyReportView from './views/MonthlyReportView'
 import TimelineView from './views/TimelineView'
+import PlanView from './views/PlanView'
 import MultiFilter, { type FilterItem, type FilterKey } from './components/MultiFilter'
 import type { BoardSnapshot } from './types'
 import { SLA_DEFAULT, SLA_FILTERS, slaFilterMatch, slaInfo, type SlaFilter, type SlaPart } from './sla'
@@ -54,9 +55,9 @@ function buildStats<K extends FilterKey>(snap: BoardSnapshot, now: Date, keysOf:
 }
 
 type Thresholds = { warn: number; crit: number }
-type Tab = 'board' | 'entidades' | 'timeline' | 'relatorio'
+type Tab = 'board' | 'entidades' | 'timeline' | 'plano' | 'relatorio'
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'board', label: 'Board' }, { id: 'entidades', label: 'Entidades' }, { id: 'timeline', label: 'Linha do tempo' }, { id: 'relatorio', label: 'Relatório mensal' },
+  { id: 'board', label: 'Board' }, { id: 'entidades', label: 'Entidades' }, { id: 'timeline', label: 'Linha do tempo' }, { id: 'plano', label: 'Planejamento' }, { id: 'relatorio', label: 'Relatório mensal' },
 ]
 const readTab = (): Tab => { const h = location.hash.replace('#', ''); return TABS.some(t => t.id === h) ? h as Tab : 'board' }
 
@@ -118,6 +119,8 @@ export default function App() {
         .toLowerCase().includes(q)
   }, [filter])
   const entityMatch = useMemo(() => (t: BoardTicket) => entitySel === null || entitySel.has(entityKey(t)), [entitySel])
+  // Planejamento: texto + entidades (técnicos filtram as linhas dentro da própria aba)
+  const planMatch = useMemo(() => (t: BoardTicket) => textMatch(t) && entityMatch(t), [textMatch, entityMatch])
   // texto + entidades + técnicos selecionados + SLA (Board)
   const match = useMemo(() => (t: BoardTicket) =>
     textMatch(t) && entityMatch(t) &&
@@ -172,7 +175,7 @@ export default function App() {
         <div className="actions">
           {tab !== 'timeline' && <input type="search" placeholder={isBoardData ? 'Filtrar: #id, título, técnico, grupo, entidade…' : 'Filtrar entidade…'} value={filter} onChange={e => setFilter(e.target.value)} />}
           {isBoardData && tab !== 'timeline' && snap && <MultiFilter items={entityStats} selected={entitySel} onChange={setEntitySel} singular="entidade" plural="entidades" icon="🏢" feminine />}
-          {tab === 'board' && snap && <MultiFilter items={techStats} selected={techSel} onChange={setTechSel} singular="técnico" plural="técnicos" icon="👤" />}
+          {(tab === 'board' || tab === 'plano') && snap && <MultiFilter items={techStats} selected={techSel} onChange={setTechSel} singular="técnico" plural="técnicos" icon="👤" />}
           {tab === 'board' && snap && (
             <div className="seg sla-seg" role="group" aria-label="Filtro de SLA">
               <span className="seg-label">SLA</span>
@@ -203,6 +206,7 @@ export default function App() {
         </details>
       )}
 
+      {tab === 'plano' && snap && <PlanView snap={snap} techIds={techSel} match={planMatch} />}
       {tab === 'timeline' && snap && <TimelineView techs={techStats.filter(t => t.id !== NO_TECH)} now={now} />}
       {tab === 'entidades' && snap && <EntitiesView snap={snap} match={textMatch} now={now} selected={entitySel} onSelect={setEntitySel} />}
 

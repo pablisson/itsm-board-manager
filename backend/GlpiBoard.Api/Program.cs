@@ -3,6 +3,7 @@ using System.Text;
 using GlpiBoard.Api.Board;
 using GlpiBoard.Api.Config;
 using GlpiBoard.Api.Glpi;
+using GlpiBoard.Api.Plan;
 
 // .env é opcional e NUNCA sobrescreve variáveis do sistema operacional / hospedagem.
 DotEnv.LoadIfExists(".env", Path.Combine("..", "..", ".env"));
@@ -16,6 +17,7 @@ builder.Services.AddSingleton(sp => new GlpiClient(
 builder.Services.AddSingleton<BoardService>();
 builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<TimelineService>();
+builder.Services.AddSingleton<PlanStore>();
 
 var app = builder.Build();
 var log = app.Logger;
@@ -55,6 +57,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.MapGet("/healthz", () => Results.Ok(new { ok = true }));
+app.MapGet("/api/plan/health", async (PlanStore s, CancellationToken ct) => Results.Ok(new { configured = s.Configured, ok = await s.PingAsync(ct) }));
 
 app.MapGet("/api/config-status", (BoardSettings s) => Results.Json(new Dictionary<string, object?>
 {
@@ -93,6 +96,45 @@ app.MapGet("/api/timeline", async (TimelineService tl, int tech, CancellationTok
         return Results.Json(new { errors = new[] { ex.Message } }, statusCode: 502);
     }
 });
+
+// ---------- Planejamento (técnico × dia) — PostgreSQL ----------
+var plan = app.MapGroup("/api/plan");
+plan.AddEndpointFilter(async (ctx, next) =>
+{
+    try { return await next(ctx); }
+    catch (PlanUnavailableException ex) { return Results.Json(new { errors = new[] { ex.Message } }, statusCode: 503); }
+});
+static bool ValidDay(DateOnly d) => d.Year is >= 2000 and <= 2100;
+
+plan.MapGet("", async (PlanStore store, string? month, CancellationToken ct) =>
+{
+    var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, settings.GlpiTimeZone).DateTime);
+    var first = new DateOnly(today.Year, today.Month, 1);
+    if (!string.IsNullOrEmpty(month))
+    {
+        if (!DateOnly.TryParseExact(month + "-01", "yyyy-MM-dd", out first) || !ValidDay(first))
+            return Results.BadRequest(new { errors = new[] { "Parâmetro month inválido (use AAAA-MM)." } });
+    }
+    var last = first.AddMonths(1).AddDays(-1);
+    var items = await store.ListAsync(first, last, ct);
+    var counts = (await store.CountsAsync(today, ct)).Select(c => new { c.TechId, c.TicketId, c.Days, Next = c.Next });
+    return Results.Ok(new { Month = first.ToString("yyyy-MM"), From = first, To = last, Today = today, Items = items, Counts = counts });
+});
+
+plan.MapPost("", async (PlanStore store, PlanCreate body, CancellationToken ct) =>
+{
+    if (body.TechId <= 0 || body.TicketId <= 0 || !ValidDay(body.Day)) return Results.BadRequest(new { errors = new[] { "Dados inválidos." } });
+    return Results.Ok(await store.AddAsync(body, ct));
+});
+
+plan.MapPut("/{id:long}", async (PlanStore store, long id, PlanMove body, CancellationToken ct) =>
+{
+    if (!ValidDay(body.Day) || body.Position is < 0) return Results.BadRequest(new { errors = new[] { "Dados inválidos." } });
+    return await store.MoveAsync(id, body, ct) is { } item ? Results.Ok(item) : Results.NotFound();
+});
+
+plan.MapDelete("/{id:long}", async (PlanStore store, long id, CancellationToken ct) =>
+    await store.DeleteAsync(id, ct) ? Results.NoContent() : Results.NotFound());
 
 app.MapFallbackToFile("index.html");
 app.Run();
