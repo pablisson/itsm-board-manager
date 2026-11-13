@@ -50,14 +50,16 @@ export function slaInfo(t: BoardTicket, now: Date): SlaInfo {
   return { tto, ttr, worst }
 }
 
-export type SlaFilter = 'all' | 'risk' | 'late'
+export type SlaFilter = 'off' | 'all' | 'risk' | 'late'
+export const SLA_DEFAULT: SlaFilter = 'off'
 export const SLA_FILTERS: { id: SlaFilter; label: string; title: string }[] = [
-  { id: 'all', label: 'Todos', title: 'Sem filtro de SLA' },
+  { id: 'off', label: 'Não mostrar', title: 'Oculta o SLA no board (padrão)' },
+  { id: 'all', label: 'Todos', title: 'Mostra o SLA em todos os cards, sem filtrar' },
   { id: 'risk', label: 'Em risco', title: 'Em aberto com prazo estourado ou perto de vencer (≤ 25% do prazo)' },
   { id: 'late', label: 'Estourado', title: 'Prazo estourado (em aberto) ou cumprido fora do prazo' },
 ]
 export function slaFilterMatch(f: SlaFilter, i: SlaInfo): boolean {
-  if (f === 'all') return true
+  if (f === 'off' || f === 'all') return true
   const states = [i.tto?.state, i.ttr?.state]
   return f === 'risk' ? states.some(s => s === 'late' || s === 'warn') : states.some(s => s === 'late' || s === 'missed')
 }

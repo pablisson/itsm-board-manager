@@ -7,13 +7,18 @@ import MonthlyReportView from './views/MonthlyReportView'
 import TimelineView from './views/TimelineView'
 import MultiFilter, { type FilterItem, type FilterKey } from './components/MultiFilter'
 import type { BoardSnapshot } from './types'
-import { SLA_FILTERS, slaFilterMatch, slaInfo, type SlaFilter, type SlaPart } from './sla'
+import { SLA_DEFAULT, SLA_FILTERS, slaFilterMatch, slaInfo, type SlaFilter, type SlaPart } from './sla'
 
+// chave nova (v2) para que todos comecem com o SLA oculto, que é o padrão
+const SLA_KEY = 'board.sla.v2'
 function usePersistedSla(): [SlaFilter, (f: SlaFilter) => void] {
   const [f, setF] = useState<SlaFilter>(() => {
-    try { const v = localStorage.getItem('board.sla'); return SLA_FILTERS.some(x => x.id === v) ? v as SlaFilter : 'all' } catch { return 'all' }
+    try { const v = localStorage.getItem(SLA_KEY); return SLA_FILTERS.some(x => x.id === v) ? v as SlaFilter : SLA_DEFAULT } catch { return SLA_DEFAULT }
   })
-  return [f, (v: SlaFilter) => { setF(v); try { localStorage.setItem('board.sla', v) } catch { /* sem storage */ } }]
+  return [f, (v: SlaFilter) => {
+    setF(v)
+    try { if (v === SLA_DEFAULT) localStorage.removeItem(SLA_KEY); else localStorage.setItem(SLA_KEY, v) } catch { /* sem storage */ }
+  }]
 }
 
 /** Id reservado para "Sem técnico" (tickets sem técnico atribuído). */
@@ -127,10 +132,13 @@ export default function App() {
     [{ id: entityKey(t), name: shortEntity(t.entity), title: t.entity ?? undefined }]) : [], [snap, now])
 
   const countSel = <K extends FilterKey>(items: FilterItem<K>[], s: Set<K>) => items.filter(i => s.has(i.id)).length
-  const clearAll = () => { setFilter(''); setEntitySel(null); setTechSel(null); setSlaFilter('all') }
+  const showSla = slaFilter !== 'off'
+  const slaFiltering = slaFilter === 'risk' || slaFilter === 'late'
+  // limpar filtros mantém o SLA visível se ele estava sendo exibido
+  const clearAll = () => { setFilter(''); setEntitySel(null); setTechSel(null); if (slaFiltering) setSlaFilter('all') }
 
   const cols = snap?.columns
-  const filtering = !!filter || entitySel !== null || techSel !== null || slaFilter !== 'all'
+  const filtering = !!filter || entitySel !== null || techSel !== null || slaFiltering
   const lanes = (cols?.inProgress ?? [])
     .filter(l => techSel === null || techSel.has(l.id))
     .map(l => ({ ...l, tickets: l.tickets.filter(match) }))
@@ -206,7 +214,7 @@ export default function App() {
             <Kpi label="Bloqueados (Pendente)" value={fBlocked.length} tone="red" />
             <Kpi label={`Completos · ${snap.doneDays}d`} value={fCompleted.length} tone="green" />
             <Kpi label={`Cancelados · ${snap.doneDays}d`} value={snap.cancelledConfigured ? fCancelled.length : null} tone="gray" />
-            <Kpi label="SLA estourado (abertos)" value={slaLate} sub={`${slaWarn} perto de vencer${doneOnTime !== null ? ` · ${doneOnTime}% resolvidos no prazo` : ''}`} tone={slaLate ? 'red' : 'green'} />
+            {showSla && <Kpi label="SLA estourado (abertos)" value={slaLate} sub={`${slaWarn} perto de vencer${doneOnTime !== null ? ` · ${doneOnTime}% resolvidos no prazo` : ''}`} tone={slaLate ? 'red' : 'green'} />}
           </section>
           {filtering && (
             <p className="filter-note">
@@ -215,7 +223,7 @@ export default function App() {
                 ? entityStats.filter(e => entitySel.has(e.id)).map(e => e.name).join(', ') || 'nenhuma'
                 : `${countSel(entityStats, entitySel)} de ${entityStats.length}`}</b></>}
               {techSel !== null && <> · técnicos: <b>{countSel(techStats, techSel)} de {techStats.length}</b></>}
-              {slaFilter !== 'all' && <> · SLA: <b>{SLA_FILTERS.find(f => f.id === slaFilter)?.label.toLowerCase()}</b></>}
+              {slaFiltering && <> · SLA: <b>{SLA_FILTERS.find(f => f.id === slaFilter)?.label.toLowerCase()}</b></>}
               {filter && <> · texto: <b>“{filter}”</b></>}
               <button type="button" className="link" onClick={clearAll}>Limpar filtros</button>
             </p>
@@ -223,26 +231,26 @@ export default function App() {
 
           <main className="board">
             <Column title="1 · Sem atribuição" hint="Status Novo/Em atendimento sem técnico atribuído" tone="amber" count={fUnassigned.length}>
-              {fUnassigned.map(t => <Card key={t.id} t={t} now={now} th={th} showGroups />)}
+              {fUnassigned.map(t => <Card key={t.id} t={t} now={now} th={th} sla={showSla} showGroups />)}
             </Column>
 
             <Column title="2 · Em andamento" hint="Agrupado pelo técnico atribuído (observadores ignorados)" tone="blue" wide count={fInProgress}>
               {lanes.length === 0 && <Empty />}
-              {lanes.map(l => <Lane key={l.id} lane={l} now={now} th={th} />)}
+              {lanes.map(l => <Lane key={l.id} lane={l} now={now} th={th} sla={showSla} />)}
             </Column>
 
             <Column title="3 · Completos" hint={`Solucionados/fechados nos últimos ${snap.doneDays} dias`} tone="green" count={fCompleted.length}>
-              {fCompleted.map(t => <Card key={t.id} t={t} now={now} th={th} done showTech />)}
+              {fCompleted.map(t => <Card key={t.id} t={t} now={now} th={th} sla={showSla} done showTech />)}
             </Column>
 
             <Column title="4 · Bloqueados" hint="Status Pendente no ITSM" tone="red" count={fBlocked.length}>
-              {fBlocked.map(t => <Card key={t.id} t={t} now={now} th={th} showTech showGroups />)}
+              {fBlocked.map(t => <Card key={t.id} t={t} now={now} th={th} sla={showSla} showTech showGroups />)}
             </Column>
 
             <Column title="5 · Cancelados" hint="Por tipo de solução configurado" tone="gray" count={snap.cancelledConfigured ? fCancelled.length : null}>
               {!snap.cancelledConfigured
                 ? <p className="empty">Regra de cancelamento não configurada. O ITSM não possui status “Cancelado”; defina <code>BOARD_CANCELLED_SOLUTIONTYPE_IDS</code>. Nenhum dado é inferido.</p>
-                : fCancelled.map(t => <Card key={t.id} t={t} now={now} th={th} done showTech />)}
+                : fCancelled.map(t => <Card key={t.id} t={t} now={now} th={th} sla={showSla} done showTech />)}
             </Column>
           </main>
         </>
@@ -279,7 +287,7 @@ function Column({ title, hint, tone, count, wide, children }: { title: string; h
 
 const Empty = () => <p className="empty">Nenhum item.</p>
 
-function Lane({ lane, now, th }: { lane: TechnicianLane; now: Date; th: Thresholds }) {
+function Lane({ lane, now, th, sla }: { lane: TechnicianLane; now: Date; th: Thresholds; sla: boolean }) {
   const [open, setOpen] = useState(true)
   const ages = lane.tickets.map(t => hoursBetween(t.openedAtUtc, now) ?? 0)
   const oldest = ages.length ? Math.max(...ages) : null
@@ -295,18 +303,18 @@ function Lane({ lane, now, th }: { lane: TechnicianLane; now: Date; th: Threshol
         </span>
         <span className="chev">{open ? '▾' : '▸'}</span>
       </button>
-      {open && lane.tickets.map(t => <Card key={t.id} t={t} now={now} th={th} coTechs={t.technicians.filter(x => x.id !== lane.id)} />)}
+      {open && lane.tickets.map(t => <Card key={t.id} t={t} now={now} th={th} sla={sla} coTechs={t.technicians.filter(x => x.id !== lane.id)} />)}
     </div>
   )
 }
 
-function Card({ t, now, th, done, showTech, showGroups, coTechs }: {
-  t: BoardTicket; now: Date; th: Thresholds; done?: boolean; showTech?: boolean; showGroups?: boolean; coTechs?: { id: number; name: string }[]
+function Card({ t, now, th, sla: showSla, done, showTech, showGroups, coTechs }: {
+  t: BoardTicket; now: Date; th: Thresholds; sla: boolean; done?: boolean; showTech?: boolean; showGroups?: boolean; coTechs?: { id: number; name: string }[]
 }) {
   const end = done ? (t.solvedAtUtc ?? t.closedAtUtc) : null
   const age = done ? (end ? hoursBetween(t.openedAtUtc, new Date(end)) : null) : hoursBetween(t.openedAtUtc, now)
   const level = done || age === null ? '' : age >= th.crit ? 'crit' : age >= th.warn ? 'warn' : 'ok'
-  const sla = slaInfo(t, now)
+  const sla = showSla ? slaInfo(t, now) : { tto: null, ttr: null, worst: null }
   return (
     <article className={`card ${level}${sla.worst === 'late' ? ' sla-late' : ''}`}>
       <div className="card-top">
