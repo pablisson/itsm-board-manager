@@ -4,6 +4,16 @@ import { apiUrl, formatDate, formatDuration, hoursBetween } from './format'
 import { entityKey, placedTickets, shortEntity } from './entity'
 import EntitiesView from './views/EntitiesView'
 import MonthlyReportView from './views/MonthlyReportView'
+import TechFilter, { NO_TECH, type TechStat } from './components/TechFilter'
+
+// Seleção de técnicos lembrada neste navegador (null = todos)
+const TECH_KEY = 'board.techs'
+function loadTechSel(): Set<number> | null {
+  try { const v = localStorage.getItem(TECH_KEY); return v ? new Set(JSON.parse(v) as number[]) : null } catch { return null }
+}
+function saveTechSel(s: Set<number> | null) {
+  try { if (s === null) localStorage.removeItem(TECH_KEY); else localStorage.setItem(TECH_KEY, JSON.stringify([...s])) } catch { /* sem storage */ }
+}
 
 type Thresholds = { warn: number; crit: number }
 type Tab = 'board' | 'entidades' | 'relatorio'
@@ -31,7 +41,9 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [entity, setEntity] = useState('')
+  const [techSel, setTechSel] = useState<Set<number> | null>(loadTechSel)
   const [tab, setTab] = useTab()
+  const changeTechSel = (s: Set<number> | null) => { setTechSel(s); saveTechSel(s) }
   const now = useNow()
 
   const load = useCallback(async (force: boolean) => {
@@ -61,8 +73,33 @@ export default function App() {
       `#${t.id} ${t.title} ${t.category ?? ''} ${t.entity ?? ''} ${t.technicians.map(x => x.name).join(' ')} ${t.assignedGroups.join(' ')}`
         .toLowerCase().includes(q)
   }, [filter])
-  // texto + entidade selecionada (Board)
-  const match = useMemo(() => (t: BoardTicket) => textMatch(t) && (!entity || entityKey(t) === entity), [textMatch, entity])
+  // texto + entidade + técnicos selecionados (Board)
+  const match = useMemo(() => (t: BoardTicket) =>
+    textMatch(t) && (!entity || entityKey(t) === entity) &&
+    (techSel === null || (t.technicians.length ? t.technicians.some(x => techSel.has(x.id)) : techSel.has(NO_TECH))),
+  [textMatch, entity, techSel])
+
+  const techStats = useMemo<TechStat[]>(() => {
+    if (!snap) return []
+    const crit = snap.ageCriticalHours
+    const m = new Map<number, TechStat>()
+    const get = (id: number, name: string) => { let s = m.get(id); if (!s) m.set(id, s = { id, name, open: 0, blocked: 0, done: 0, critical: 0 }); return s }
+    get(NO_TECH, 'Sem técnico')
+    for (const { ticket: t, column } of placedTickets(snap)) {
+      const people = t.technicians.length ? t.technicians : [{ id: NO_TECH, name: 'Sem técnico' }]
+      for (const p of people) {
+        const s = get(p.id, p.name)
+        if (column === 'inProgress' || column === 'unassigned') {
+          s.open++
+          if ((hoursBetween(t.openedAtUtc, now) ?? 0) >= crit) s.critical++
+        } else if (column === 'blocked') s.blocked++
+        else if (column === 'completed') s.done++
+      }
+    }
+    const [none, ...rest] = [m.get(NO_TECH)!, ...[...m.values()].filter(s => s.id !== NO_TECH)
+      .sort((a, b) => b.open - a.open || b.blocked - a.blocked || a.name.localeCompare(b.name))]
+    return [none!, ...rest]
+  }, [snap, now])
 
   const entities = useMemo(() => {
     if (!snap) return []
@@ -72,10 +109,16 @@ export default function App() {
   }, [snap])
 
   const cols = snap?.columns
-  const filtering = !!filter || !!entity
+  const filtering = !!filter || !!entity || techSel !== null
   const lanes = (cols?.inProgress ?? [])
+    .filter(l => techSel === null || techSel.has(l.id))
     .map(l => ({ ...l, tickets: l.tickets.filter(match) }))
     .filter(l => l.tickets.length > 0 || !filtering)
+  const fUnassigned = (cols?.unassigned ?? []).filter(match)
+  const fBlocked = (cols?.blocked ?? []).filter(match)
+  const fCompleted = (cols?.completed ?? []).filter(match)
+  const fCancelled = (cols?.cancelled ?? []).filter(match)
+  const fInProgress = new Set(lanes.flatMap(l => l.tickets.map(t => t.id))).size
 
   const isBoardData = tab !== 'relatorio'
 
@@ -97,6 +140,7 @@ export default function App() {
               {entities.map(([e, n]) => <option key={e} value={e} title={e}>{shortEntity(e)} ({n})</option>)}
             </select>
           )}
+          {tab === 'board' && snap && <TechFilter techs={techStats} selected={techSel} onChange={changeTechSel} />}
           {isBoardData && (
             <button className="primary" onClick={() => load(true)} disabled={loading}>
               {loading ? 'Sincronizando…' : '⟳ Ressincronizar'}
@@ -126,36 +170,41 @@ export default function App() {
       {tab === 'board' && snap && cols && (
         <>
           <section className="kpis">
-            <Kpi label="Sem atribuição" value={snap.totals.unassigned} tone="amber" />
-            <Kpi label="Em andamento" value={snap.totals.inProgress} sub={`${cols.inProgress.length} técnico(s)`} tone="blue" />
-            <Kpi label="Bloqueados (Pendente)" value={snap.totals.blocked} tone="red" />
-            <Kpi label={`Completos · ${snap.doneDays}d`} value={snap.totals.completed} tone="green" />
-            <Kpi label={`Cancelados · ${snap.doneDays}d`} value={snap.cancelledConfigured ? snap.totals.cancelled : null} tone="gray" />
+            <Kpi label="Sem atribuição" value={fUnassigned.length} tone="amber" />
+            <Kpi label="Em andamento" value={fInProgress} sub={`${lanes.length} técnico(s)`} tone="blue" />
+            <Kpi label="Bloqueados (Pendente)" value={fBlocked.length} tone="red" />
+            <Kpi label={`Completos · ${snap.doneDays}d`} value={fCompleted.length} tone="green" />
+            <Kpi label={`Cancelados · ${snap.doneDays}d`} value={snap.cancelledConfigured ? fCancelled.length : null} tone="gray" />
           </section>
+          {filtering && (
+            <p className="filter-note">
+              Exibindo dados filtrados{techSel !== null && <> · técnicos: <b>{techStats.filter(t => techSel.has(t.id)).length} de {techStats.length}</b></>}{entity && <> · entidade: <b>{shortEntity(entity)}</b></>}{filter && <> · texto: <b>“{filter}”</b></>}
+              <button type="button" className="link" onClick={() => { setFilter(''); setEntity(''); changeTechSel(null) }}>Limpar filtros</button>
+            </p>
+          )}
 
           <main className="board">
-            <Column title="1 · Sem atribuição" hint="Status Novo/Em atendimento sem técnico atribuído" tone="amber" count={cols.unassigned.filter(match).length}>
-              {cols.unassigned.filter(match).map(t => <Card key={t.id} t={t} now={now} th={th} showGroups />)}
+            <Column title="1 · Sem atribuição" hint="Status Novo/Em atendimento sem técnico atribuído" tone="amber" count={fUnassigned.length}>
+              {fUnassigned.map(t => <Card key={t.id} t={t} now={now} th={th} showGroups />)}
             </Column>
 
-            <Column title="2 · Em andamento" hint="Agrupado pelo técnico atribuído (observadores ignorados)" tone="blue" wide
-              count={new Set(lanes.flatMap(l => l.tickets.map(t => t.id))).size}>
+            <Column title="2 · Em andamento" hint="Agrupado pelo técnico atribuído (observadores ignorados)" tone="blue" wide count={fInProgress}>
               {lanes.length === 0 && <Empty />}
               {lanes.map(l => <Lane key={l.id} lane={l} now={now} th={th} />)}
             </Column>
 
-            <Column title="3 · Completos" hint={`Solucionados/fechados nos últimos ${snap.doneDays} dias`} tone="green" count={cols.completed.filter(match).length}>
-              {cols.completed.filter(match).map(t => <Card key={t.id} t={t} now={now} th={th} done showTech />)}
+            <Column title="3 · Completos" hint={`Solucionados/fechados nos últimos ${snap.doneDays} dias`} tone="green" count={fCompleted.length}>
+              {fCompleted.map(t => <Card key={t.id} t={t} now={now} th={th} done showTech />)}
             </Column>
 
-            <Column title="4 · Bloqueados" hint="Status Pendente no ITSM" tone="red" count={cols.blocked.filter(match).length}>
-              {cols.blocked.filter(match).map(t => <Card key={t.id} t={t} now={now} th={th} showTech showGroups />)}
+            <Column title="4 · Bloqueados" hint="Status Pendente no ITSM" tone="red" count={fBlocked.length}>
+              {fBlocked.map(t => <Card key={t.id} t={t} now={now} th={th} showTech showGroups />)}
             </Column>
 
-            <Column title="5 · Cancelados" hint="Por tipo de solução configurado" tone="gray" count={snap.cancelledConfigured ? cols.cancelled.filter(match).length : null}>
+            <Column title="5 · Cancelados" hint="Por tipo de solução configurado" tone="gray" count={snap.cancelledConfigured ? fCancelled.length : null}>
               {!snap.cancelledConfigured
                 ? <p className="empty">Regra de cancelamento não configurada. O ITSM não possui status “Cancelado”; defina <code>BOARD_CANCELLED_SOLUTIONTYPE_IDS</code>. Nenhum dado é inferido.</p>
-                : cols.cancelled.filter(match).map(t => <Card key={t.id} t={t} now={now} th={th} done showTech />)}
+                : fCancelled.map(t => <Card key={t.id} t={t} now={now} th={th} done showTech />)}
             </Column>
           </main>
         </>

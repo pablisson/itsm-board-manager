@@ -130,3 +130,40 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
   .grid td.left { max-width: 180px; }
   .table-wrap, .table-wrap.report { max-height: none; }
 }
+
+/* ---- filtro de técnicos ---- */
+.tf { position: relative; display: inline-flex; }
+.tf-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; max-width: 260px; }
+.tf-btn.active { border-color: var(--blue); background: var(--blue-bg); color: var(--blue); font-weight: 600; }
+.tf .tf-btn.active { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.tf-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tf-icon { font-size: 13px; }
+.tf-clear { border: 1px solid var(--blue); border-left: 0; border-radius: 0 8px 8px 0; background: var(--blue-bg); color: var(--blue); font-size: 16px; padding: 0 10px; cursor: pointer; }
+.tf-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: 380px; max-width: calc(100vw - 32px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 12px 32px rgba(0,0,0,.18); display: flex; flex-direction: column; }
+.tf-search { margin: 10px 10px 6px; min-width: 0 !important; }
+.tf-quick { display: flex; gap: 6px; padding: 0 10px 8px; flex-wrap: wrap; }
+.tf-quick button { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.tf-quick button:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.tf-quick button:disabled { opacity: .5; cursor: default; }
+.tf-head { display: flex; justify-content: space-between; padding: 6px 14px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--surface-2); text-transform: uppercase; letter-spacing: .03em; }
+.tf-head span:last-child { margin-right: 36px; }
+.tf-list { list-style: none; margin: 0; padding: 4px; max-height: min(420px, 55vh); overflow-y: auto; }
+.tf-list li { display: flex; align-items: center; border-radius: 6px; }
+.tf-list li:hover { background: var(--surface-2); }
+.tf-list li:first-child { border-bottom: 1px dashed var(--border); border-radius: 6px 6px 0 0; margin-bottom: 2px; }
+.tf-list label { flex: 1; display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; min-width: 0; font-size: 13px; }
+.tf-list li:not(.on) .tf-name, .tf-list li:not(.on) .tf-nums { opacity: .55; }
+.tf-list input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--blue); margin: 0; flex: none; }
+.tf-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tf-list .pill.crit { margin-left: 0; }
+.tf-nums { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; display: inline-flex; gap: 3px; }
+.tf-nums b { min-width: 18px; text-align: right; font-weight: 600; }
+.n-blue { color: var(--blue); } .n-red { color: var(--red); } .n-green { color: var(--green); }
+.tf-only { visibility: hidden; border: 0; background: none; color: var(--blue); font: inherit; font-size: 12px; font-weight: 600; padding: 4px 8px; cursor: pointer; width: 36px; }
+.tf-list li:hover .tf-only, .tf-only:focus-visible { visibility: visible; }
+.tf-foot { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-top: 1px solid var(--border); font-size: 12px; }
+.tf-foot .primary { padding: 6px 14px; }
+.filter-note { margin: -6px 0 10px; font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+button.link { border: 0; background: none; color: var(--blue); font: inherit; font-weight: 600; cursor: pointer; padding: 0 4px; text-decoration: underline; }
+@media (hover: none) { .tf-only { visibility: visible; } }
+@media (max-width: 720px) { .tf { flex: 1; } .tf-btn { flex: 1; max-width: none; } .tf-pop { position: fixed; left: 16px; right: 16px; top: 80px; width: auto; } }
