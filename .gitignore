@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+**/bin/
+**/obj/
+backend/GlpiBoard.Api/wwwroot/
+frontend/node_modules/
+frontend/dist/
+*.user
+.vs/
+.vscode/
+publish/

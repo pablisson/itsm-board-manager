@@ -1,0 +1,130 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using GlpiBoard.Api.Config;
+
+namespace GlpiBoard.Api.Glpi;
+
+/// <summary>
+/// Cliente mínimo da API REST legada do GLPI (apirest.php, v9.5/10.x).
+/// Abre uma sessão por sincronização e a encerra ao final (killSession).
+/// Credenciais nunca são logadas.
+/// </summary>
+public sealed class GlpiClient(HttpClient http, BoardSettings settings, ILogger<GlpiClient> log)
+{
+    public sealed class Session(GlpiClient owner, string token) : IAsyncDisposable
+    {
+        internal string Token { get; } = token;
+        public ValueTask DisposeAsync() => new(owner.KillSessionAsync(Token));
+    }
+
+    public async Task<Session> OpenSessionAsync(CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"{settings.GlpiUrl}/initSession");
+        if (!string.IsNullOrEmpty(settings.AppToken)) req.Headers.Add("App-Token", settings.AppToken);
+
+        if (settings.UsesUserToken)
+            req.Headers.TryAddWithoutValidation("Authorization", $"user_token {settings.UserToken}");
+        else if (settings.UsesCredentials)
+            req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
+                Convert.ToBase64String(Encoding.UTF8.GetBytes($"{settings.Username}:{settings.Password}")));
+        else
+            throw new GlpiException("Nenhuma credencial ITSM configurada.");
+
+        using var res = await http.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+            throw new GlpiException($"initSession falhou ({(int)res.StatusCode}): {SafeError(body)}", (int)res.StatusCode);
+
+        using var doc = JsonDocument.Parse(body);
+        var token = doc.RootElement.TryGetProperty("session_token", out var t) ? t.GetString() : null;
+        if (string.IsNullOrEmpty(token)) throw new GlpiException("initSession não retornou session_token.");
+        return new Session(this, token);
+    }
+
+    private async Task KillSessionAsync(string token)
+    {
+        try
+        {
+            using var req = Build(HttpMethod.Get, "killSession", token);
+            using var _ = await http.SendAsync(req);
+        }
+        catch (Exception ex) { log.LogDebug(ex, "killSession falhou (ignorado)"); }
+    }
+
+    /// <summary>GET genérico. Retorna null para 404/ERROR_ITEM_NOT_FOUND (sub-itens inexistentes).</summary>
+    public async Task<JsonElement?> GetAsync(Session s, string pathAndQuery, CancellationToken ct)
+    {
+        using var req = Build(HttpMethod.Get, pathAndQuery, s.Token);
+        using var res = await http.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+
+        if (res.StatusCode == HttpStatusCode.NotFound) return null;
+        // 206 Partial Content é sucesso paginado no GLPI
+        if (!res.IsSuccessStatusCode)
+        {
+            if (body.Contains("ERROR_RANGE_EXCEED_TOTAL")) return null;
+            throw new GlpiException($"GET {StripQuery(pathAndQuery)} falhou ({(int)res.StatusCode}): {SafeError(body)}", (int)res.StatusCode);
+        }
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        using var doc = JsonDocument.Parse(body);
+        return doc.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// Executa /search/Ticket paginando automaticamente.
+    /// criteria: lista de (prefixo-sem-índice-externo) já formatada pelo chamador.
+    /// </summary>
+    public async Task<List<JsonElement>> SearchAllAsync(Session s, string itemtype, IReadOnlyList<KeyValuePair<string, string>> query, CancellationToken ct, int pageSize = 500)
+    {
+        var all = new List<JsonElement>();
+        var start = 0;
+        while (true)
+        {
+            var qs = string.Join("&", query.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+            var json = await GetAsync(s, $"search/{itemtype}?{qs}&range={start}-{start + pageSize - 1}", ct);
+            if (json is null) break;
+            var root = json.Value;
+            var total = root.TryGetProperty("totalcount", out var tc) ? ReadInt(tc) ?? 0 : 0;
+            if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+                all.AddRange(data.EnumerateArray().Select(e => e.Clone()));
+            start += pageSize;
+            if (start >= total) break;
+        }
+        return all;
+    }
+
+    private HttpRequestMessage Build(HttpMethod m, string pathAndQuery, string sessionToken)
+    {
+        var req = new HttpRequestMessage(m, $"{settings.GlpiUrl}/{pathAndQuery}");
+        req.Headers.Add("Session-Token", sessionToken);
+        if (!string.IsNullOrEmpty(settings.AppToken)) req.Headers.Add("App-Token", settings.AppToken);
+        return req;
+    }
+
+    private static string StripQuery(string p) => p.Split('?')[0];
+
+    /// <summary>Mensagens de erro do GLPI vêm como ["ERROR_CODE","mensagem"]. Limita tamanho e não ecoa headers.</summary>
+    private static string SafeError(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return "(sem corpo)";
+        var b = body.Length > 300 ? body[..300] + "…" : body;
+        return b.Replace("\n", " ");
+    }
+
+    public static int? ReadInt(JsonElement e) => e.ValueKind switch
+    {
+        JsonValueKind.Number => e.TryGetInt32(out var i) ? i : null,
+        JsonValueKind.String => int.TryParse(e.GetString(), out var i) ? i : null,
+        _ => null
+    };
+
+    public static string? ReadString(JsonElement e) => e.ValueKind switch
+    {
+        JsonValueKind.String => e.GetString(),
+        JsonValueKind.Number => e.GetRawText(),
+        JsonValueKind.Null or JsonValueKind.Undefined => null,
+        _ => e.GetRawText()
+    };
+}
