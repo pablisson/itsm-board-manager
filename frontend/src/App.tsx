@@ -4,15 +4,39 @@ import { apiUrl, formatDate, formatDuration, hoursBetween } from './format'
 import { entityKey, placedTickets, shortEntity } from './entity'
 import EntitiesView from './views/EntitiesView'
 import MonthlyReportView from './views/MonthlyReportView'
-import TechFilter, { NO_TECH, type TechStat } from './components/TechFilter'
+import MultiFilter, { type FilterItem, type FilterKey } from './components/MultiFilter'
+import type { BoardSnapshot } from './types'
 
-// Seleção de técnicos lembrada neste navegador (null = todos)
-const TECH_KEY = 'board.techs'
-function loadTechSel(): Set<number> | null {
-  try { const v = localStorage.getItem(TECH_KEY); return v ? new Set(JSON.parse(v) as number[]) : null } catch { return null }
+/** Id reservado para "Sem técnico" (tickets sem técnico atribuído). */
+const NO_TECH = -1
+
+// Seleções lembradas neste navegador (null = todos)
+function loadSel<K extends FilterKey>(key: string): Set<K> | null {
+  try { const v = localStorage.getItem(key); return v ? new Set(JSON.parse(v) as K[]) : null } catch { return null }
 }
-function saveTechSel(s: Set<number> | null) {
-  try { if (s === null) localStorage.removeItem(TECH_KEY); else localStorage.setItem(TECH_KEY, JSON.stringify([...s])) } catch { /* sem storage */ }
+function saveSel<K extends FilterKey>(key: string, s: Set<K> | null) {
+  try { if (s === null) localStorage.removeItem(key); else localStorage.setItem(key, JSON.stringify([...s])) } catch { /* sem storage */ }
+}
+function usePersistedSel<K extends FilterKey>(key: string): [Set<K> | null, (s: Set<K> | null) => void] {
+  const [sel, setSel] = useState<Set<K> | null>(() => loadSel<K>(key))
+  return [sel, (s: Set<K> | null) => { setSel(s); saveSel(key, s) }]
+}
+
+/** Carga por item (técnico/entidade): em aberto, bloqueados, completos e críticos. */
+function buildStats<K extends FilterKey>(snap: BoardSnapshot, now: Date, keysOf: (t: BoardTicket) => { id: K; name: string; title?: string; special?: boolean }[]): FilterItem<K>[] {
+  const m = new Map<K, FilterItem<K>>()
+  for (const { ticket: t, column } of placedTickets(snap)) {
+    for (const k of keysOf(t)) {
+      let s = m.get(k.id)
+      if (!s) m.set(k.id, s = { ...k, open: 0, blocked: 0, done: 0, critical: 0 })
+      if (column === 'inProgress' || column === 'unassigned') {
+        s.open++
+        if ((hoursBetween(t.openedAtUtc, now) ?? 0) >= snap.ageCriticalHours) s.critical++
+      } else if (column === 'blocked') s.blocked++
+      else if (column === 'completed') s.done++
+    }
+  }
+  return [...m.values()].sort((a, b) => Number(!!b.special) - Number(!!a.special) || b.open - a.open || b.blocked - a.blocked || a.name.localeCompare(b.name))
 }
 
 type Thresholds = { warn: number; crit: number }
@@ -40,14 +64,13 @@ export default function App() {
   const [requestError, setRequestError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
-  const [entity, setEntity] = useState('')
-  const [techSel, setTechSel] = useState<Set<number> | null>(loadTechSel)
+  const [entitySel, setEntitySel] = usePersistedSel<string>('board.entities')
+  const [techSel, setTechSel] = usePersistedSel<number>('board.techs')
   const [tab, setTab] = useTab()
-  const changeTechSel = (s: Set<number> | null) => { setTechSel(s); saveTechSel(s) }
   const now = useNow()
 
-  const load = useCallback(async (force: boolean) => {
-    setLoading(true); setRequestError(null); setNotice(null)
+  const load = useCallback(async (force: boolean, silent = false) => {
+    if (!silent) { setLoading(true); setRequestError(null); setNotice(null) }
     try {
       const res = await fetch(apiUrl(force ? '/api/board/refresh' : '/api/board'), { method: force ? 'POST' : 'GET', credentials: 'same-origin' })
       const body = await res.json().catch(() => null)
@@ -55,12 +78,18 @@ export default function App() {
       const r = body as BoardResponse
       setData(r)
       if (r.throttledSeconds) setNotice(`Ressincronização limitada a 1 a cada ${r.throttledSeconds}s — exibindo a última leitura.`)
+      if (silent) setRequestError(null)
     } catch (e) {
-      setRequestError(e instanceof Error ? e.message : String(e))
-    } finally { setLoading(false) }
+      if (!silent) setRequestError(e instanceof Error ? e.message : String(e))
+    } finally { if (!silent) setLoading(false) }
   }, [])
 
   useEffect(() => { void load(false) }, [load])
+  // Atualização automática silenciosa: pega o snapshot que o servidor renovou em segundo plano
+  useEffect(() => {
+    const t = setInterval(() => { if (document.visibilityState === 'visible') void load(false, true) }, 120_000)
+    return () => clearInterval(t)
+  }, [load])
 
   const snap = data?.snapshot ?? null
   const th: Thresholds = { warn: snap?.ageWarnHours ?? 72, crit: snap?.ageCriticalHours ?? 168 }
@@ -73,43 +102,24 @@ export default function App() {
       `#${t.id} ${t.title} ${t.category ?? ''} ${t.entity ?? ''} ${t.technicians.map(x => x.name).join(' ')} ${t.assignedGroups.join(' ')}`
         .toLowerCase().includes(q)
   }, [filter])
-  // texto + entidade + técnicos selecionados (Board)
+  const entityMatch = useMemo(() => (t: BoardTicket) => entitySel === null || entitySel.has(entityKey(t)), [entitySel])
+  // texto + entidades + técnicos selecionados (Board)
   const match = useMemo(() => (t: BoardTicket) =>
-    textMatch(t) && (!entity || entityKey(t) === entity) &&
+    textMatch(t) && entityMatch(t) &&
     (techSel === null || (t.technicians.length ? t.technicians.some(x => techSel.has(x.id)) : techSel.has(NO_TECH))),
-  [textMatch, entity, techSel])
+  [textMatch, entityMatch, techSel])
 
-  const techStats = useMemo<TechStat[]>(() => {
-    if (!snap) return []
-    const crit = snap.ageCriticalHours
-    const m = new Map<number, TechStat>()
-    const get = (id: number, name: string) => { let s = m.get(id); if (!s) m.set(id, s = { id, name, open: 0, blocked: 0, done: 0, critical: 0 }); return s }
-    get(NO_TECH, 'Sem técnico')
-    for (const { ticket: t, column } of placedTickets(snap)) {
-      const people = t.technicians.length ? t.technicians : [{ id: NO_TECH, name: 'Sem técnico' }]
-      for (const p of people) {
-        const s = get(p.id, p.name)
-        if (column === 'inProgress' || column === 'unassigned') {
-          s.open++
-          if ((hoursBetween(t.openedAtUtc, now) ?? 0) >= crit) s.critical++
-        } else if (column === 'blocked') s.blocked++
-        else if (column === 'completed') s.done++
-      }
-    }
-    const [none, ...rest] = [m.get(NO_TECH)!, ...[...m.values()].filter(s => s.id !== NO_TECH)
-      .sort((a, b) => b.open - a.open || b.blocked - a.blocked || a.name.localeCompare(b.name))]
-    return [none!, ...rest]
-  }, [snap, now])
+  const techStats = useMemo(() => snap ? buildStats<number>(snap, now, t =>
+    t.technicians.length ? t.technicians.map(x => ({ id: x.id, name: x.name })) : [{ id: NO_TECH, name: 'Sem técnico', special: true }]) : [], [snap, now])
 
-  const entities = useMemo(() => {
-    if (!snap) return []
-    const m = new Map<string, number>()
-    for (const p of placedTickets(snap)) m.set(entityKey(p.ticket), (m.get(entityKey(p.ticket)) ?? 0) + 1)
-    return [...m.entries()].sort((a, b) => shortEntity(a[0]).localeCompare(shortEntity(b[0])))
-  }, [snap])
+  const entityStats = useMemo(() => snap ? buildStats<string>(snap, now, t =>
+    [{ id: entityKey(t), name: shortEntity(t.entity), title: t.entity ?? undefined }]) : [], [snap, now])
+
+  const countSel = <K extends FilterKey>(items: FilterItem<K>[], s: Set<K>) => items.filter(i => s.has(i.id)).length
+  const clearAll = () => { setFilter(''); setEntitySel(null); setTechSel(null) }
 
   const cols = snap?.columns
-  const filtering = !!filter || !!entity || techSel !== null
+  const filtering = !!filter || entitySel !== null || techSel !== null
   const lanes = (cols?.inProgress ?? [])
     .filter(l => techSel === null || techSel.has(l.id))
     .map(l => ({ ...l, tickets: l.tickets.filter(match) }))
@@ -134,13 +144,8 @@ export default function App() {
         </div>
         <div className="actions">
           <input type="search" placeholder={isBoardData ? 'Filtrar: #id, título, técnico, grupo, entidade…' : 'Filtrar entidade…'} value={filter} onChange={e => setFilter(e.target.value)} />
-          {isBoardData && (
-            <select value={entity} onChange={e => setEntity(e.target.value)} aria-label="Entidade">
-              <option value="">Todas as entidades</option>
-              {entities.map(([e, n]) => <option key={e} value={e} title={e}>{shortEntity(e)} ({n})</option>)}
-            </select>
-          )}
-          {tab === 'board' && snap && <TechFilter techs={techStats} selected={techSel} onChange={changeTechSel} />}
+          {isBoardData && snap && <MultiFilter items={entityStats} selected={entitySel} onChange={setEntitySel} singular="entidade" plural="entidades" icon="🏢" feminine />}
+          {tab === 'board' && snap && <MultiFilter items={techStats} selected={techSel} onChange={setTechSel} singular="técnico" plural="técnicos" icon="👤" />}
           {isBoardData && (
             <button className="primary" onClick={() => load(true)} disabled={loading}>
               {loading ? 'Sincronizando…' : '⟳ Ressincronizar'}
@@ -165,7 +170,7 @@ export default function App() {
         </details>
       )}
 
-      {tab === 'entidades' && snap && <EntitiesView snap={snap} match={textMatch} now={now} entity={entity} onEntity={setEntity} />}
+      {tab === 'entidades' && snap && <EntitiesView snap={snap} match={textMatch} now={now} selected={entitySel} onSelect={setEntitySel} />}
 
       {tab === 'board' && snap && cols && (
         <>
@@ -178,8 +183,13 @@ export default function App() {
           </section>
           {filtering && (
             <p className="filter-note">
-              Exibindo dados filtrados{techSel !== null && <> · técnicos: <b>{techStats.filter(t => techSel.has(t.id)).length} de {techStats.length}</b></>}{entity && <> · entidade: <b>{shortEntity(entity)}</b></>}{filter && <> · texto: <b>“{filter}”</b></>}
-              <button type="button" className="link" onClick={() => { setFilter(''); setEntity(''); changeTechSel(null) }}>Limpar filtros</button>
+              Exibindo dados filtrados
+              {entitySel !== null && <> · entidades: <b>{countSel(entityStats, entitySel) <= 2
+                ? entityStats.filter(e => entitySel.has(e.id)).map(e => e.name).join(', ') || 'nenhuma'
+                : `${countSel(entityStats, entitySel)} de ${entityStats.length}`}</b></>}
+              {techSel !== null && <> · técnicos: <b>{countSel(techStats, techSel)} de {techStats.length}</b></>}
+              {filter && <> · texto: <b>“{filter}”</b></>}
+              <button type="button" className="link" onClick={clearAll}>Limpar filtros</button>
             </p>
           )}
 

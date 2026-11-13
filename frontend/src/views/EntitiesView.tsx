@@ -6,9 +6,18 @@ import { formatDate, formatDuration, hoursBetween } from '../format'
 const COLS: BoardColumnKey[] = ['unassigned', 'inProgress', 'blocked', 'completed', 'cancelled']
 const SHORT: Record<BoardColumnKey, string> = { unassigned: 'S/ atrib.', inProgress: 'Andam.', blocked: 'Bloq.', completed: 'Compl.', cancelled: 'Canc.' }
 
-type Props = { snap: BoardSnapshot; match: (t: BoardTicket) => boolean; now: Date; entity: string; onEntity: (e: string) => void }
+type Props = { snap: BoardSnapshot; match: (t: BoardTicket) => boolean; now: Date; selected: Set<string> | null; onSelect: (s: Set<string> | null) => void }
 
-export default function EntitiesView({ snap, match, now, entity, onEntity }: Props) {
+export default function EntitiesView({ snap, match, now, selected, onSelect }: Props) {
+  const single = selected?.size === 1 ? [...selected][0]! : null
+  // clique: só esta entidade (ou volta a todas); Ctrl/⌘+clique: adiciona/remove da seleção
+  const pick = (name: string, multi: boolean) => {
+    if (multi) {
+      const s = new Set(selected ?? [])
+      if (s.has(name)) s.delete(name); else s.add(name)
+      onSelect(s.size ? s : null)
+    } else onSelect(single === name ? null : new Set([name]))
+  }
   const [col, setCol] = useState<BoardColumnKey | ''>('')
   const placed = useMemo(() => placedTickets(snap), [snap])
   const visible = useMemo(() => placed.filter(p => match(p.ticket)), [placed, match])
@@ -25,7 +34,7 @@ export default function EntitiesView({ snap, match, now, entity, onEntity }: Pro
   }, [visible])
 
   const list = visible
-    .filter(p => (!entity || entityKey(p.ticket) === entity) && (!col || p.column === col))
+    .filter(p => (selected === null || selected.has(entityKey(p.ticket))) && (!col || p.column === col))
     .sort((a, b) => COLS.indexOf(a.column) - COLS.indexOf(b.column) || (a.ticket.openedAtUtc ?? '').localeCompare(b.ticket.openedAtUtc ?? ''))
 
   const cols = COLS.filter(c => c !== 'cancelled' || snap.cancelledConfigured)
@@ -35,7 +44,7 @@ export default function EntitiesView({ snap, match, now, entity, onEntity }: Pro
       <section className="panel">
         <header className="panel-head">
           <h2>Entidades <span className="muted">({summary.length})</span></h2>
-          <p>Tickets abertos + solucionados nos últimos {snap.doneDays} dias. Clique numa linha para filtrar.</p>
+          <p>Tickets abertos + solucionados nos últimos {snap.doneDays} dias. Clique numa linha para filtrar · Ctrl+clique para selecionar várias.</p>
         </header>
         <div className="table-wrap">
           <table className="grid">
@@ -48,7 +57,7 @@ export default function EntitiesView({ snap, match, now, entity, onEntity }: Pro
             </thead>
             <tbody>
               {summary.map(([name, r]) => (
-                <tr key={name} className={name === entity ? 'selected' : ''} onClick={() => onEntity(name === entity ? '' : name)}>
+                <tr key={name} className={selected?.has(name) ? 'selected' : ''} onClick={e => pick(name, e.ctrlKey || e.metaKey)}>
                   <td className="left" title={name}>{shortEntity(name)}</td>
                   {cols.map(c => <td key={c} className={r[c] ? '' : 'zero'}>{r[c]}</td>)}
                   <td className="strong">{r.total}</td>
@@ -63,8 +72,8 @@ export default function EntitiesView({ snap, match, now, entity, onEntity }: Pro
       <section className="panel">
         <header className="panel-head row">
           <div>
-            <h2>{entity ? shortEntity(entity) : 'Todos os tickets'} <span className="muted">({list.length})</span></h2>
-            {entity && <p title={entity}>{entity}</p>}
+            <h2>{selected === null ? 'Todos os tickets' : single ? shortEntity(single) : `${selected.size} entidades selecionadas`} <span className="muted">({list.length})</span></h2>
+            {single && <p title={single}>{single}</p>}
           </div>
           <div className="seg">
             <button className={col === '' ? 'on' : ''} onClick={() => setCol('')}>Todos</button>

@@ -150,7 +150,7 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .tf-list { list-style: none; margin: 0; padding: 4px; max-height: min(420px, 55vh); overflow-y: auto; }
 .tf-list li { display: flex; align-items: center; border-radius: 6px; }
 .tf-list li:hover { background: var(--surface-2); }
-.tf-list li:first-child { border-bottom: 1px dashed var(--border); border-radius: 6px 6px 0 0; margin-bottom: 2px; }
+.tf-list li.special { border-bottom: 1px dashed var(--border); border-radius: 6px 6px 0 0; margin-bottom: 2px; }
 .tf-list label { flex: 1; display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; min-width: 0; font-size: 13px; }
 .tf-list li:not(.on) .tf-name, .tf-list li:not(.on) .tf-nums { opacity: .55; }
 .tf-list input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--blue); margin: 0; flex: none; }
