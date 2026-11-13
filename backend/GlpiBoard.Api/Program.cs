@@ -15,6 +15,7 @@ builder.Services.AddSingleton(sp => new GlpiClient(
     sp.GetRequiredService<IHttpClientFactory>().CreateClient("glpi"), settings, sp.GetRequiredService<ILogger<GlpiClient>>()));
 builder.Services.AddSingleton<BoardService>();
 builder.Services.AddSingleton<ReportService>();
+builder.Services.AddSingleton<TimelineService>();
 
 var app = builder.Build();
 var log = app.Logger;
@@ -81,6 +82,16 @@ app.MapGet("/api/reports/monthly", async (ReportService r, int? months, bool? re
 {
     if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });
     return Results.Ok(await r.GetMonthlyAsync(months ?? 12, refresh == true, ct));
+});
+
+app.MapGet("/api/timeline", async (TimelineService tl, int tech, CancellationToken ct) =>
+{
+    if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });
+    try { return Results.Ok(await tl.GetAsync(tech, ct)); }
+    catch (Exception ex) when (ex is GlpiException or HttpRequestException or System.Text.Json.JsonException)
+    {
+        return Results.Json(new { errors = new[] { ex.Message } }, statusCode: 502);
+    }
 });
 
 app.MapFallbackToFile("index.html");

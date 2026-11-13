@@ -4,8 +4,17 @@ import { apiUrl, formatDate, formatDuration, hoursBetween } from './format'
 import { entityKey, placedTickets, shortEntity } from './entity'
 import EntitiesView from './views/EntitiesView'
 import MonthlyReportView from './views/MonthlyReportView'
+import TimelineView from './views/TimelineView'
 import MultiFilter, { type FilterItem, type FilterKey } from './components/MultiFilter'
 import type { BoardSnapshot } from './types'
+import { SLA_FILTERS, slaFilterMatch, slaInfo, type SlaFilter, type SlaPart } from './sla'
+
+function usePersistedSla(): [SlaFilter, (f: SlaFilter) => void] {
+  const [f, setF] = useState<SlaFilter>(() => {
+    try { const v = localStorage.getItem('board.sla'); return SLA_FILTERS.some(x => x.id === v) ? v as SlaFilter : 'all' } catch { return 'all' }
+  })
+  return [f, (v: SlaFilter) => { setF(v); try { localStorage.setItem('board.sla', v) } catch { /* sem storage */ } }]
+}
 
 /** Id reservado para "Sem técnico" (tickets sem técnico atribuído). */
 const NO_TECH = -1
@@ -40,9 +49,9 @@ function buildStats<K extends FilterKey>(snap: BoardSnapshot, now: Date, keysOf:
 }
 
 type Thresholds = { warn: number; crit: number }
-type Tab = 'board' | 'entidades' | 'relatorio'
+type Tab = 'board' | 'entidades' | 'timeline' | 'relatorio'
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'board', label: 'Board' }, { id: 'entidades', label: 'Entidades' }, { id: 'relatorio', label: 'Relatório mensal' },
+  { id: 'board', label: 'Board' }, { id: 'entidades', label: 'Entidades' }, { id: 'timeline', label: 'Linha do tempo' }, { id: 'relatorio', label: 'Relatório mensal' },
 ]
 const readTab = (): Tab => { const h = location.hash.replace('#', ''); return TABS.some(t => t.id === h) ? h as Tab : 'board' }
 
@@ -66,6 +75,7 @@ export default function App() {
   const [filter, setFilter] = useState('')
   const [entitySel, setEntitySel] = usePersistedSel<string>('board.entities')
   const [techSel, setTechSel] = usePersistedSel<number>('board.techs')
+  const [slaFilter, setSlaFilter] = usePersistedSla()
   const [tab, setTab] = useTab()
   const now = useNow()
 
@@ -103,11 +113,12 @@ export default function App() {
         .toLowerCase().includes(q)
   }, [filter])
   const entityMatch = useMemo(() => (t: BoardTicket) => entitySel === null || entitySel.has(entityKey(t)), [entitySel])
-  // texto + entidades + técnicos selecionados (Board)
+  // texto + entidades + técnicos selecionados + SLA (Board)
   const match = useMemo(() => (t: BoardTicket) =>
     textMatch(t) && entityMatch(t) &&
-    (techSel === null || (t.technicians.length ? t.technicians.some(x => techSel.has(x.id)) : techSel.has(NO_TECH))),
-  [textMatch, entityMatch, techSel])
+    (techSel === null || (t.technicians.length ? t.technicians.some(x => techSel.has(x.id)) : techSel.has(NO_TECH))) &&
+    slaFilterMatch(slaFilter, slaInfo(t, now)),
+  [textMatch, entityMatch, techSel, slaFilter, now])
 
   const techStats = useMemo(() => snap ? buildStats<number>(snap, now, t =>
     t.technicians.length ? t.technicians.map(x => ({ id: x.id, name: x.name })) : [{ id: NO_TECH, name: 'Sem técnico', special: true }]) : [], [snap, now])
@@ -116,10 +127,10 @@ export default function App() {
     [{ id: entityKey(t), name: shortEntity(t.entity), title: t.entity ?? undefined }]) : [], [snap, now])
 
   const countSel = <K extends FilterKey>(items: FilterItem<K>[], s: Set<K>) => items.filter(i => s.has(i.id)).length
-  const clearAll = () => { setFilter(''); setEntitySel(null); setTechSel(null) }
+  const clearAll = () => { setFilter(''); setEntitySel(null); setTechSel(null); setSlaFilter('all') }
 
   const cols = snap?.columns
-  const filtering = !!filter || entitySel !== null || techSel !== null
+  const filtering = !!filter || entitySel !== null || techSel !== null || slaFilter !== 'all'
   const lanes = (cols?.inProgress ?? [])
     .filter(l => techSel === null || techSel.has(l.id))
     .map(l => ({ ...l, tickets: l.tickets.filter(match) }))
@@ -129,6 +140,14 @@ export default function App() {
   const fCompleted = (cols?.completed ?? []).filter(match)
   const fCancelled = (cols?.cancelled ?? []).filter(match)
   const fInProgress = new Set(lanes.flatMap(l => l.tickets.map(t => t.id))).size
+
+  // SLA dos chamados em aberto exibidos (sem duplicar tickets com mais de um técnico)
+  const openShown = [...new Map([...fUnassigned, ...lanes.flatMap(l => l.tickets), ...fBlocked].map(t => [t.id, t])).values()]
+  const openSla = openShown.map(t => slaInfo(t, now))
+  const slaLate = openSla.filter(i => i.tto?.state === 'late' || i.ttr?.state === 'late').length
+  const slaWarn = openSla.filter(i => i.worst === 'warn').length
+  const doneSla = fCompleted.map(t => slaInfo(t, now).ttr).filter((p): p is SlaPart => !!p)
+  const doneOnTime = doneSla.length ? Math.round(100 * doneSla.filter(p => p.state === 'met').length / doneSla.length) : null
 
   const isBoardData = tab !== 'relatorio'
 
@@ -143,9 +162,15 @@ export default function App() {
           </p>
         </div>
         <div className="actions">
-          <input type="search" placeholder={isBoardData ? 'Filtrar: #id, título, técnico, grupo, entidade…' : 'Filtrar entidade…'} value={filter} onChange={e => setFilter(e.target.value)} />
-          {isBoardData && snap && <MultiFilter items={entityStats} selected={entitySel} onChange={setEntitySel} singular="entidade" plural="entidades" icon="🏢" feminine />}
+          {tab !== 'timeline' && <input type="search" placeholder={isBoardData ? 'Filtrar: #id, título, técnico, grupo, entidade…' : 'Filtrar entidade…'} value={filter} onChange={e => setFilter(e.target.value)} />}
+          {isBoardData && tab !== 'timeline' && snap && <MultiFilter items={entityStats} selected={entitySel} onChange={setEntitySel} singular="entidade" plural="entidades" icon="🏢" feminine />}
           {tab === 'board' && snap && <MultiFilter items={techStats} selected={techSel} onChange={setTechSel} singular="técnico" plural="técnicos" icon="👤" />}
+          {tab === 'board' && snap && (
+            <div className="seg sla-seg" role="group" aria-label="Filtro de SLA">
+              <span className="seg-label">SLA</span>
+              {SLA_FILTERS.map(f => <button key={f.id} type="button" title={f.title} className={slaFilter === f.id ? 'on' : ''} aria-pressed={slaFilter === f.id} onClick={() => setSlaFilter(f.id)}>{f.label}</button>)}
+            </div>
+          )}
           {isBoardData && (
             <button className="primary" onClick={() => load(true)} disabled={loading}>
               {loading ? 'Sincronizando…' : '⟳ Ressincronizar'}
@@ -170,6 +195,7 @@ export default function App() {
         </details>
       )}
 
+      {tab === 'timeline' && snap && <TimelineView techs={techStats.filter(t => t.id !== NO_TECH)} now={now} />}
       {tab === 'entidades' && snap && <EntitiesView snap={snap} match={textMatch} now={now} selected={entitySel} onSelect={setEntitySel} />}
 
       {tab === 'board' && snap && cols && (
@@ -180,6 +206,7 @@ export default function App() {
             <Kpi label="Bloqueados (Pendente)" value={fBlocked.length} tone="red" />
             <Kpi label={`Completos · ${snap.doneDays}d`} value={fCompleted.length} tone="green" />
             <Kpi label={`Cancelados · ${snap.doneDays}d`} value={snap.cancelledConfigured ? fCancelled.length : null} tone="gray" />
+            <Kpi label="SLA estourado (abertos)" value={slaLate} sub={`${slaWarn} perto de vencer${doneOnTime !== null ? ` · ${doneOnTime}% resolvidos no prazo` : ''}`} tone={slaLate ? 'red' : 'green'} />
           </section>
           {filtering && (
             <p className="filter-note">
@@ -188,6 +215,7 @@ export default function App() {
                 ? entityStats.filter(e => entitySel.has(e.id)).map(e => e.name).join(', ') || 'nenhuma'
                 : `${countSel(entityStats, entitySel)} de ${entityStats.length}`}</b></>}
               {techSel !== null && <> · técnicos: <b>{countSel(techStats, techSel)} de {techStats.length}</b></>}
+              {slaFilter !== 'all' && <> · SLA: <b>{SLA_FILTERS.find(f => f.id === slaFilter)?.label.toLowerCase()}</b></>}
               {filter && <> · texto: <b>“{filter}”</b></>}
               <button type="button" className="link" onClick={clearAll}>Limpar filtros</button>
             </p>
@@ -221,7 +249,7 @@ export default function App() {
       )}
       {isBoardData && !snap && loading && <p className="empty center">Sincronizando com o ITSM…</p>}
       {isBoardData && !snap && !loading && !requestError && !data?.lastError && <p className="empty center">Sem dados.</p>}
-      <footer>Tempo aberto = tempo corrido desde a abertura do chamado (24×7), não SLA/horário útil. Dados lidos diretamente do ITSM; nada é estimado.</footer>
+      <footer>Tempo aberto = tempo corrido desde a abertura do chamado (24×7). SLA = prazos de atendimento e solução calculados pelo ITSM (calendário da SLA); “perto de vencer” = resta ≤ 25% do prazo. Dados lidos diretamente do ITSM; nada é estimado.</footer>
     </div>
   )
 }
@@ -278,8 +306,9 @@ function Card({ t, now, th, done, showTech, showGroups, coTechs }: {
   const end = done ? (t.solvedAtUtc ?? t.closedAtUtc) : null
   const age = done ? (end ? hoursBetween(t.openedAtUtc, new Date(end)) : null) : hoursBetween(t.openedAtUtc, now)
   const level = done || age === null ? '' : age >= th.crit ? 'crit' : age >= th.warn ? 'warn' : 'ok'
+  const sla = slaInfo(t, now)
   return (
-    <article className={`card ${level}`}>
+    <article className={`card ${level}${sla.worst === 'late' ? ' sla-late' : ''}`}>
       <div className="card-top">
         <a href={t.url} target="_blank" rel="noopener noreferrer" className="id">#{t.id}</a>
         {t.priority != null && t.priority >= 4 && <span className="pill prio">{t.priorityLabel}</span>}
@@ -288,6 +317,12 @@ function Card({ t, now, th, done, showTech, showGroups, coTechs }: {
         </span>
       </div>
       <h3 title={t.title}>{t.title}</h3>
+      {(sla.tto || sla.ttr) && (
+        <div className="sla">
+          {sla.tto && <SlaChip label="Atend." p={sla.tto} />}
+          {sla.ttr && <SlaChip label="Solução" p={sla.ttr} />}
+        </div>
+      )}
       <dl>
         <dt>Entidade</dt><dd title={t.entity ?? ''} className="entity">{shortEntity(t.entity)}</dd>
         {t.category && <><dt>Categoria</dt><dd>{t.category}</dd></>}
@@ -301,6 +336,11 @@ function Card({ t, now, th, done, showTech, showGroups, coTechs }: {
       {t.flags.length > 0 && <div className="flags">{t.flags.map(f => <span key={f} className="pill flag">⚠ {f}</span>)}</div>}
     </article>
   )
+}
+
+const SLA_ICON = { ok: '◷', warn: '◷', late: '!', met: '✓', missed: '✗', paused: '⏸' } as const
+function SlaChip({ label, p }: { label: string; p: SlaPart }) {
+  return <span className={`sla-chip ${p.state}`} title={p.title}><i aria-hidden>{SLA_ICON[p.state]}</i>{label} <b>{p.text}</b></span>
 }
 
 const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]!.toUpperCase()).join('') || '?'

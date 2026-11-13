@@ -27,7 +27,7 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
     private const int GROUP_TYPE_ASSIGNED = 2;
     private const int SOLUTION_REFUSED = 4;
 
-    private static readonly Dictionary<int, string> StatusLabels = new()
+    internal static readonly Dictionary<int, string> StatusLabels = new()
     {
         [1] = "Novo", [2] = "Em atendimento (atribuído)", [3] = "Em atendimento (planejado)",
         [4] = "Pendente", [5] = "Solucionado", [6] = "Fechado",
@@ -39,8 +39,10 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
 
     // IDs de campos do motor de busca do GLPI (Ticket)
     private const string F_ID = "2", F_NAME = "1", F_STATUS = "12", F_DATE = "15", F_DATEMOD = "19",
-        F_PRIORITY = "3", F_CATEGORY = "7", F_ENTITY = "80", F_SOLVEDATE = "17", F_CLOSEDATE = "16";
-    private static readonly string[] DisplayFields = [F_ID, F_NAME, F_STATUS, F_DATE, F_DATEMOD, F_PRIORITY, F_CATEGORY, F_ENTITY, F_SOLVEDATE, F_CLOSEDATE];
+        F_PRIORITY = "3", F_CATEGORY = "7", F_ENTITY = "80", F_SOLVEDATE = "17", F_CLOSEDATE = "16",
+        F_TTO_DUE = "155", F_TTR_DUE = "18", F_TTO_SLA = "37", F_TTR_SLA = "30", F_TTO_DELAY = "150";
+    private static readonly string[] DisplayFields = [F_ID, F_NAME, F_STATUS, F_DATE, F_DATEMOD, F_PRIORITY, F_CATEGORY, F_ENTITY, F_SOLVEDATE, F_CLOSEDATE,
+        F_TTO_DUE, F_TTR_DUE, F_TTO_SLA, F_TTR_SLA, F_TTO_DELAY];
 
     private readonly SemaphoreSlim _syncLock = new(1, 1);
     private BoardSnapshot? _snapshot;
@@ -115,6 +117,10 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
         var rows = openRows.Concat(doneRows)
             .Select(ParseRow).Where(r => r is not null).Select(r => r!)
             .GroupBy(r => r.Id).Select(g => g.First()).ToList();
+
+        // 2b) Data em que o chamado foi assumido (takeintoaccountdate não existe na busca) — em lotes
+        var ownedAt = await TakeIntoAccountDatesAsync(session, rows.Where(r => r.TtoDelaySeconds is > 0).Select(r => r.Id).ToList(), warnings, ct);
+        rows = rows.Select(r => ownedAt.TryGetValue(r.Id, out var d) ? r with { TakenIntoAccountAt = d } : r).ToList();
 
         // 3) Atores (técnicos/grupos) e soluções — chamadas em paralelo com limite
         var userCache = new ConcurrentDictionary<int, Task<string>>();
@@ -248,6 +254,30 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
         return $"Usuário #{id}";
     }
 
+    private async Task<Dictionary<int, string>> TakeIntoAccountDatesAsync(GlpiClient.Session s, List<int> ids, ConcurrentBag<string> warnings, CancellationToken ct)
+    {
+        var result = new ConcurrentDictionary<int, string>();
+        using var gate = new SemaphoreSlim(4);
+        await Task.WhenAll(ids.Chunk(50).Select(async chunk =>
+        {
+            await gate.WaitAsync(ct);
+            try
+            {
+                var q = string.Join('&', chunk.Select((id, i) => $"items[{i}][itemtype]=Ticket&items[{i}][items_id]={id}"));
+                var json = await glpi.GetAsync(s, $"getMultipleItems?{q}", ct);
+                foreach (var e in Items(json))
+                    if (Int(e, "id") is { } id && Str(e, "takeintoaccountdate") is { } d) result[id] = d;
+            }
+            catch (GlpiException ex)
+            {
+                log.LogWarning("Falha ao ler data de atribuição dos chamados: {Status}", ex.StatusCode);
+                warnings.Add("Não foi possível ler a data em que os chamados foram assumidos — SLA de atendimento dos já assumidos pode aparecer como “no prazo”.");
+            }
+            finally { gate.Release(); }
+        }));
+        return new(result);
+    }
+
     private async Task<string?> ResolveSolutionTypeAsync(GlpiClient.Session s, int id, CancellationToken ct)
     {
         try
@@ -288,8 +318,19 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
     }
 
     private sealed record Row(int Id, string Title, int Status, int? Priority, string? Category, string? Entity,
-        string? OpenedAt, string? UpdatedAt, string? SolvedAt, string? ClosedAt)
+        string? OpenedAt, string? UpdatedAt, string? SolvedAt, string? ClosedAt,
+        string? TtoSla, string? TtrSla, string? TtoDue, string? TtrDue, long? TtoDelaySeconds, string? TakenIntoAccountAt = null)
     {
+        private BoardSla? Sla(BoardSettings st)
+        {
+            var tto = ToUtc(TtoDue, st); var ttr = ToUtc(TtrDue, st);
+            if (tto is null && ttr is null && TtoSla is null && TtrSla is null) return null;
+            // takeintoaccount_delay_stat > 0 = já assumido; a data exata vem de takeintoaccountdate (mesma regra do "excedido" do ITSM).
+            // Se a data não pôde ser lida, considera assumido sem atraso conhecido (no prazo).
+            DateTimeOffset? owned = TtoDelaySeconds is > 0 ? ToUtc(TakenIntoAccountAt, st) ?? (tto is { } d && ToUtc(OpenedAt, st) is { } o && o < d ? o : tto) : null;
+            return new BoardSla(TtoSla, TtrSla, tto, ttr, owned);
+        }
+
         public BoardTicket ToTicket(BoardSettings st, List<PersonRef> techs, List<string> groups, int? solTypeId, string? solType, List<string> flags) => new()
         {
             Id = Id,
@@ -306,6 +347,7 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
             SolutionTypeId = solTypeId, SolutionType = solType,
             Url = $"{st.GlpiWebBase}/front/ticket.form.php?id={Id}",
             Flags = flags,
+            Sla = Sla(st),
         };
     }
 
@@ -316,13 +358,15 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
         if (id is null || status is null) return null;
         return new Row(id.Value, Str(e, F_NAME) ?? $"(sem título) #{id}", status.Value, Int(e, F_PRIORITY),
             CleanDropdown(Str(e, F_CATEGORY)), CleanDropdown(Str(e, F_ENTITY)),
-            Str(e, F_DATE), Str(e, F_DATEMOD), Str(e, F_SOLVEDATE), Str(e, F_CLOSEDATE));
+            Str(e, F_DATE), Str(e, F_DATEMOD), Str(e, F_SOLVEDATE), Str(e, F_CLOSEDATE),
+            CleanDropdown(Str(e, F_TTO_SLA)), CleanDropdown(Str(e, F_TTR_SLA)), Str(e, F_TTO_DUE), Str(e, F_TTR_DUE),
+            long.TryParse(Str(e, F_TTO_DELAY), out var delay) ? delay : null);
     }
 
     /// <summary>A busca do GLPI pode devolver "&#62;" como separador de hierarquia (ex.: "TI &#62; Rede").</summary>
     private static string? CleanDropdown(string? s) => s is null ? null : System.Net.WebUtility.HtmlDecode(s).Replace(' ', ' ').Trim();
 
-    private static DateTimeOffset? ToUtc(string? glpiLocal, BoardSettings st)
+    internal static DateTimeOffset? ToUtc(string? glpiLocal, BoardSettings st)
     {
         if (string.IsNullOrWhiteSpace(glpiLocal)) return null;
         if (!DateTime.TryParseExact(glpiLocal, ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd"],

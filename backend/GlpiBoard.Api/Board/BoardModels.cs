@@ -2,6 +2,10 @@ namespace GlpiBoard.Api.Board;
 
 public sealed record PersonRef(int Id, string Name);
 
+/// <summary>SLA do chamado como calculado pelo ITSM (os prazos já consideram o calendário da SLA).
+/// OwnedAtUtc = quando foi assumido (abertura + tempo de atribuição); null = ainda não assumido.</summary>
+public sealed record BoardSla(string? TtoName, string? TtrName, DateTimeOffset? TtoDueUtc, DateTimeOffset? TtrDueUtc, DateTimeOffset? OwnedAtUtc);
+
 public sealed record BoardTicket
 {
     public int Id { get; init; }
@@ -25,6 +29,7 @@ public sealed record BoardTicket
     public string Url { get; init; } = "";
     /// <summary>Alertas de qualidade de dado deste ticket (ex.: status Novo com técnico).</summary>
     public List<string> Flags { get; init; } = new();
+    public BoardSla? Sla { get; init; }
 }
 
 public sealed record TechnicianLane(int Id, string Name, List<BoardTicket> Tickets);

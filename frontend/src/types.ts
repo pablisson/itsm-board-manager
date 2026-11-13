@@ -8,6 +8,13 @@ export interface BoardTicket {
   technicians: PersonRef[]; assignedGroups: string[]
   solutionTypeId?: number | null; solutionType?: string | null
   url: string; flags: string[]
+  sla?: BoardSla | null
+}
+export interface BoardSla {
+  ttoName: string | null; ttrName: string | null
+  ttoDueUtc: string | null; ttrDueUtc: string | null
+  /** quando foi assumido; null = ainda não assumido */
+  ownedAtUtc: string | null
 }
 export interface TechnicianLane { id: number; name: string; tickets: BoardTicket[] }
 export interface BoardSnapshot {
@@ -26,3 +33,15 @@ export interface MonthlyReport {
   rows: MonthlyEntityRow[]; monthTotals: number[]; grandTotal: number
 }
 export interface MonthlyReportResponse { report: MonthlyReport | null; error: string | null; throttledSeconds?: number | null }
+export interface StatusSegment { status: number; label: string; fromUtc: string; toUtc: string | null }
+export type TimelineEventKind = 'status' | 'followup' | 'task' | 'solution' | 'assign' | 'document'
+export interface TimelineEvent { atUtc: string; kind: TimelineEventKind; label: string; user: string | null; fromStatus?: number | null; toStatus?: number | null }
+export interface TimelineTicket {
+  id: number; title: string; entity: string | null; status: number; statusLabel: string; url: string
+  openedAtUtc: string | null; endAtUtc: string | null; lastUpdateUtc: string | null
+  segments: StatusSegment[]; events: TimelineEvent[]
+}
+export interface TimelineResponse {
+  technician: PersonRef | null; generatedAtUtc: string; durationMs: number; doneDays: number
+  tickets: TimelineTicket[]; warnings: string[]; error?: string | null
+}
