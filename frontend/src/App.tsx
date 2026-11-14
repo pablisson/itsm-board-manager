@@ -8,6 +8,7 @@ import TimelineView from './views/TimelineView'
 import PlanView from './views/PlanView'
 import SlaReportsView from './views/SlaReportsView'
 import ReportsMenu from './components/ReportsMenu'
+import SystemMenu from './components/SystemMenu'
 import MultiFilter,{ type FilterItem, type FilterKey } from './components/MultiFilter'
 import type { BoardSnapshot } from './types'
 import { SLA_DEFAULT, SLA_FILTERS, slaFilterMatch, slaInfo, type SlaFilter, type SlaPart } from './sla'
@@ -170,7 +171,7 @@ export default function App() {
     <div className="app">
       <header className="top">
         <div>
-          <h1>Board de chamados · ITSM</h1>
+          <SystemMenu current="itsm" />
           <p className="meta">
             {snap ? <>Última sincronização: <b>{formatDate(snap.syncedAtUtc)}</b> · {snap.glpiHost} · {(snap.durationMs / 1000).toFixed(1)}s</> : 'Ainda não sincronizado'}
             {data?.stale && snap && <span className="pill warn">desatualizado</span>}

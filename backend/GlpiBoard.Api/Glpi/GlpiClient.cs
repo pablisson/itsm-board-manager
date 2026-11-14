@@ -72,6 +72,49 @@ public sealed class GlpiClient(HttpClient http, BoardSettings settings, ILogger<
         return doc.RootElement.Clone();
     }
 
+    /// <summary>POST {itemtype} com {"input": {...}}. Retorna o id criado.</summary>
+    public async Task<int> CreateAsync(Session s, string itemtype, object input, CancellationToken ct)
+    {
+        var root = await SendJsonAsync(s, HttpMethod.Post, itemtype, new { input }, ct);
+        var id = root is { ValueKind: JsonValueKind.Object } o && o.TryGetProperty("id", out var v) ? ReadInt(v) : null;
+        if (id is not > 0) throw new GlpiException($"POST {itemtype} não retornou id: {SafeError(root?.GetRawText() ?? "")}");
+        return id.Value;
+    }
+
+    /// <summary>PUT {itemtype}/{id}. O GLPI responde 200 mesmo quando recusa: [{"5": false, "message": "..."}].</summary>
+    public async Task UpdateAsync(Session s, string itemtype, int id, object input, CancellationToken ct)
+    {
+        var root = await SendJsonAsync(s, HttpMethod.Put, $"{itemtype}/{id}", new { input }, ct);
+        if (root is { ValueKind: JsonValueKind.Array } a)
+            foreach (var r in a.EnumerateArray())
+                if (r.ValueKind == JsonValueKind.Object && r.TryGetProperty(id.ToString(), out var ok) && ok.ValueKind == JsonValueKind.False)
+                    throw new GlpiException($"PUT {itemtype}/{id} recusado: {(r.TryGetProperty("message", out var m) ? m.GetString() : "")}");
+    }
+
+    /// <summary>DELETE {itemtype}/{id} (force_purge: apaga definitivamente). 404 é ignorado.</summary>
+    public async Task DeleteAsync(Session s, string itemtype, int id, bool purge, CancellationToken ct)
+    {
+        using var req = Build(HttpMethod.Delete, $"{itemtype}/{id}{(purge ? "?force_purge=true" : "")}", s.Token);
+        using var res = await http.SendAsync(req, ct);
+        if (res.StatusCode == HttpStatusCode.NotFound) return;
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+            throw new GlpiException($"DELETE {itemtype}/{id} falhou ({(int)res.StatusCode}): {SafeError(body)}", (int)res.StatusCode);
+    }
+
+    private async Task<JsonElement?> SendJsonAsync(Session s, HttpMethod m, string path, object body, CancellationToken ct)
+    {
+        using var req = Build(m, path, s.Token);
+        req.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        using var res = await http.SendAsync(req, ct);
+        var text = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+            throw new GlpiException($"{m} {StripQuery(path)} falhou ({(int)res.StatusCode}): {SafeError(text)}", (int)res.StatusCode);
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        using var doc = JsonDocument.Parse(text);
+        return doc.RootElement.Clone();
+    }
+
     /// <summary>
     /// Executa /search/Ticket paginando automaticamente.
     /// criteria: lista de (prefixo-sem-índice-externo) já formatada pelo chamador.

@@ -128,12 +128,61 @@ Coloque um proxy com HTTPS na frente (Nginx, Caddy, Traefik ou o TLS do próprio
 
 **Azure App Service:** use o deploy do container ou do `publish`. Cadastre as variáveis em *Configuração → Configurações de aplicativo* (ou referências ao Key Vault).
 
-## 6. Endpoints
+## 6. Gestão de Projetos
+
+O título da página ("Board de chamados · ITSM") é um botão que troca de sistema. A outra opção é **Gestão de Projetos** (`#pm`).
+
+**Projetos**
+- Cada projeto tem nome, entidade do ITSM, início, fim e descrição.
+- A lista pode ser filtrada por entidade e mostra o realizado × previsto de cada projeto.
+
+**Aba Tarefas**
+- O grid tem Nº, título, descrição, status, responsáveis, as quatro datas (início e fim, planejado e executado), dependências, realizado × previsto, desvio, checklist, anexos, ID no ITSM e ações.
+- Teclado: `Enter` cria a próxima tarefa, `Tab` transforma a tarefa em subtarefa da de cima e `Shift+Tab` sobe um nível. São no máximo 3 níveis.
+- Tarefa com subtarefas vira tarefa-resumo: fica em negrito extra e tem datas, status e % calculados das subtarefas.
+- Status: são os estados de projeto do ITSM (Novo, Processando, Fechado).
+  - Preencher a conclusão fecha a tarefa.
+  - Fechar a tarefa preenche a conclusão.
+  - A tarefa só fecha com o checklist completo.
+- Dependências: Término→Início (inicia após o término), Início→Início (em paralelo), Término→Término (pode iniciar antes) e Início→Término, com folga em dias.
+  - Uma dependência não respeitada aparece em vermelho.
+  - "Ajustar datas" empurra o planejado da tarefa até respeitar as dependências.
+  - Ciclos são bloqueados.
+- **Marcos**: nome, objetivo, data meta e tarefas associadas. A situação (no prazo, em risco, atrasado ou atingido) é calculada a partir das tarefas.
+
+**Planejado × realizado**
+- O previsto para hoje cresce de forma linear entre o início e o fim planejados.
+- O realizado é 100% para tarefas concluídas. Nas demais, vem do checklist ou do % informado.
+- A tarefa-resumo e o projeto ponderam esses valores pela duração planejada das tarefas.
+
+**Aba Gráfico de Gantt**
+- A coluna Nº/tarefa fica fixa e a escala tem meses e dias, até 24 meses depois do fim do projeto.
+- Cada tarefa tem duas barras: em cima o planejado (a parte escura é o % realizado) e embaixo o executado (verde quando concluída, vermelho quando atrasada).
+- O gráfico mostra também tarefas-resumo, marcos, setas de dependência, a linha de hoje e o início/fim do projeto.
+- **Exportar PDF** gera um A3 paisagem vetorial, com a escala ajustada ao período do projeto e cabeçalho repetido em cada página.
+
+**ITSM (GLPI, módulo Projetos)**
+- **Associar ao ITSM** cria a *tarefa de projeto* no GLPI. Se ainda não existirem lá, cria antes o projeto e as tarefas-pai.
+- A criação inclui a equipe (responsáveis) e as dependências (`ProjectTaskLink`).
+- **Sincronizar** compara os dois lados:
+  - Se a tarefa mudou aqui desde a última sincronização, envia as mudanças ao ITSM. Se mudou nos dois lados, a versão daqui prevalece.
+  - Se mudou só no ITSM (o `date_mod` mudou), traz as mudanças do ITSM.
+- Excluir algo aqui **não** apaga nada no ITSM.
+
+Os dados ficam no mesmo PostgreSQL do Planejamento (tabelas `pm_*`, criadas automaticamente). Os anexos ficam no banco, com até 20 MB por arquivo, e entram no `pg_dump`.
+
+## 7. Endpoints
 - `GET /api/board`: snapshot em cache (`BOARD_CACHE_SECONDS`).
 - `GET /api/reports/sla?from=AAAA-MM&to=AAAA-MM`: tickets abertos no período (até 12 meses) com prazos de SLA, flags "excedido" do ITSM e tempos (assumido, solução útil, pendente, lançado em tarefas). Base da aba **Relatórios SLA**.
 - `GET /api/plan?month=AAAA-MM`: itens planejados do mês (técnico × dia), mais a contagem de dias planejados por ticket.
 - `POST /api/plan` `{techId, techName, ticketId, title, day}`: planeja um ticket num dia. `PUT /api/plan/{id}` `{day}` move o item. `DELETE /api/plan/{id}` remove o item.
 - `GET /api/plan/health`: diz se o banco do planejamento está configurado e acessível.
+- `/api/pm/*`: gestão de projetos.
+  - Leitura: `meta`, `projects`.
+  - Tarefas: `tasks/{id}` (PATCH parcial), `indent`, `outdent`, `move`, `align`.
+  - Itens das tarefas: `dependencies`, `checklist`, `attachments`, `milestones`.
+  - ITSM: `glpi/link`, `glpi/sync`.
+  - Toda alteração exige o cabeçalho `X-Requested-With: board`, como proteção contra CSRF.
 - `POST /api/board/refresh`: botão **Ressincronizar**. Força a leitura no GLPI, com no máximo 1 leitura a cada `BOARD_REFRESH_MIN_INTERVAL_SECONDS` para proteger o GLPI.
 - `GET /api/config-status`: diagnóstico da configuração (sem valores).
 - `GET /healthz`: health check público.

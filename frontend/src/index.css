@@ -345,3 +345,16 @@ label.check input { accent-color: var(--blue); width: 16px; height: 16px; }
 .rm-label { font-weight: 600; font-size: 14px; }
 .rm-hint { font-size: 12px; color: var(--muted); }
 .rm-btn { padding: 5px 10px; font-size: 18px; line-height: 1; }
+
+/* ---------- Seletor de sistema (título) ---------- */
+.sys { position: relative; }
+.sys-btn { display: inline-flex; align-items: center; gap: 8px; background: none; border: 1px solid transparent; border-radius: 8px; padding: 2px 8px; margin-left: -8px; font: inherit; font-size: 20px; font-weight: 700; color: var(--text); cursor: pointer; }
+.sys-btn:hover, .sys-btn[aria-expanded=true] { background: var(--surface); border-color: var(--border); }
+.sys-caret { font-size: 13px; color: var(--muted); }
+.sys-pop { position: absolute; top: calc(100% + 6px); left: -8px; z-index: 40; width: 360px; max-width: calc(100vw - 32px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 12px 32px rgba(0,0,0,.18); padding: 4px; }
+.sys-pop button { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px; padding: 10px; font: inherit; color: var(--text); cursor: pointer; }
+.sys-pop button:hover, .sys-pop button:focus-visible { background: var(--surface-2); outline: none; }
+.sys-pop button.on .sys-title { color: var(--blue); }
+.sys-ico { font-size: 20px; line-height: 1.2; }
+.sys-title { display: block; font-weight: 700; font-size: 14px; }
+.sys-hint { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }

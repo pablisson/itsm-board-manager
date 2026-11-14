@@ -4,6 +4,7 @@ using GlpiBoard.Api.Board;
 using GlpiBoard.Api.Config;
 using GlpiBoard.Api.Glpi;
 using GlpiBoard.Api.Plan;
+using GlpiBoard.Api.Pm;
 
 // .env é opcional e NUNCA sobrescreve variáveis do sistema operacional / hospedagem.
 DotEnv.LoadIfExists(".env", Path.Combine("..", "..", ".env"));
@@ -19,6 +20,9 @@ builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<TimelineService>();
 builder.Services.AddSingleton<SlaReportService>();
 builder.Services.AddSingleton<PlanStore>();
+builder.Services.AddSingleton<PmStore>();
+builder.Services.AddSingleton<PmGlpi>();
+builder.Services.AddSingleton<PmService>();
 
 var app = builder.Build();
 var log = app.Logger;
@@ -149,6 +153,8 @@ plan.MapPut("/{id:long}", async (PlanStore store, long id, PlanMove body, Cancel
 
 plan.MapDelete("/{id:long}", async (PlanStore store, long id, CancellationToken ct) =>
     await store.DeleteAsync(id, ct) ? Results.NoContent() : Results.NotFound());
+
+app.MapPm();
 
 app.MapFallbackToFile("index.html");
 app.Run();
