@@ -6,7 +6,9 @@ import EntitiesView from './views/EntitiesView'
 import MonthlyReportView from './views/MonthlyReportView'
 import TimelineView from './views/TimelineView'
 import PlanView from './views/PlanView'
-import MultiFilter, { type FilterItem, type FilterKey } from './components/MultiFilter'
+import SlaReportsView from './views/SlaReportsView'
+import ReportsMenu from './components/ReportsMenu'
+import MultiFilter,{ type FilterItem, type FilterKey } from './components/MultiFilter'
 import type { BoardSnapshot } from './types'
 import { SLA_DEFAULT, SLA_FILTERS, slaFilterMatch, slaInfo, type SlaFilter, type SlaPart } from './sla'
 
@@ -55,9 +57,11 @@ function buildStats<K extends FilterKey>(snap: BoardSnapshot, now: Date, keysOf:
 }
 
 type Thresholds = { warn: number; crit: number }
-type Tab = 'board' | 'entidades' | 'timeline' | 'plano' | 'relatorio'
-const TABS: { id: Tab; label: string }[] = [
+type Tab = 'board' | 'entidades' | 'timeline' | 'plano' | 'sla' | 'relatorio'
+// menu: true = não aparece nas abas, só no botão "Relatórios" à direita
+const TABS: { id: Tab; label: string; menu?: boolean; hint?: string }[] = [
   { id: 'board', label: 'Board' }, { id: 'entidades', label: 'Entidades' }, { id: 'timeline', label: 'Linha do tempo' }, { id: 'plano', label: 'Planejamento' }, { id: 'relatorio', label: 'Relatório mensal' },
+  { id: 'sla', label: 'Relatórios de SLA', menu: true, hint: 'Atendimento/solução fora do prazo e tempo em atendimento, por técnico' },
 ]
 const readTab = (): Tab => { const h = location.hash.replace('#', ''); return TABS.some(t => t.id === h) ? h as Tab : 'board' }
 
@@ -175,14 +179,14 @@ export default function App() {
         <div className="actions">
           {tab !== 'timeline' && <input type="search" placeholder={isBoardData ? 'Filtrar: #id, título, técnico, grupo, entidade…' : 'Filtrar entidade…'} value={filter} onChange={e => setFilter(e.target.value)} />}
           {isBoardData && tab !== 'timeline' && snap && <MultiFilter items={entityStats} selected={entitySel} onChange={setEntitySel} singular="entidade" plural="entidades" icon="🏢" feminine />}
-          {(tab === 'board' || tab === 'plano') && snap && <MultiFilter items={techStats} selected={techSel} onChange={setTechSel} singular="técnico" plural="técnicos" icon="👤" />}
+          {(tab === 'board' || tab === 'plano' || tab === 'sla') && snap && <MultiFilter items={techStats} selected={techSel} onChange={setTechSel} singular="técnico" plural="técnicos" icon="👤" />}
           {tab === 'board' && snap && (
             <div className="seg sla-seg" role="group" aria-label="Filtro de SLA">
               <span className="seg-label">SLA</span>
               {SLA_FILTERS.map(f => <button key={f.id} type="button" title={f.title} className={slaFilter === f.id ? 'on' : ''} aria-pressed={slaFilter === f.id} onClick={() => setSlaFilter(f.id)}>{f.label}</button>)}
             </div>
           )}
-          {isBoardData && (
+          {isBoardData && tab !== 'sla' && (
             <button className="primary" onClick={() => load(true)} disabled={loading}>
               {loading ? 'Sincronizando…' : '⟳ Ressincronizar'}
             </button>
@@ -190,11 +194,15 @@ export default function App() {
         </div>
       </header>
 
-      <nav className="tabs" role="tablist">
-        {TABS.map(t => <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>{t.label}</button>)}
-      </nav>
+      <div className="tabs-bar">
+        <nav className="tabs" role="tablist">
+          {TABS.filter(t => !t.menu).map(t => <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>{t.label}</button>)}
+        </nav>
+        <ReportsMenu items={TABS.filter(t => t.menu).map(t => ({ id: t.id, label: t.label, hint: t.hint }))} active={TABS.some(t => t.menu && t.id === tab) ? tab : null} onSelect={id => setTab(id as Tab)} />
+      </div>
 
       {tab === 'relatorio' && <MonthlyReportView filter={filter} />}
+      {tab === 'sla' && <SlaReportsView filter={filter} entitySel={entitySel} techSel={techSel} />}
 
       {isBoardData && requestError && <div className="banner error">Falha ao consultar o board: {requestError}</div>}
       {isBoardData && data?.lastError && <div className="banner error">Última sincronização com o ITSM falhou ({formatDate(data.lastErrorAtUtc)}): {data.lastError}{snap && ' — exibindo a última leitura válida.'}</div>}

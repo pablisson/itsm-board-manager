@@ -45,3 +45,16 @@ export interface TimelineResponse {
   technician: PersonRef | null; generatedAtUtc: string; durationMs: number; doneDays: number
   tickets: TimelineTicket[]; warnings: string[]; error?: string | null
 }
+
+export interface SlaReportTicket {
+  id: number; title: string; status: number; statusLabel: string; entity: string | null; url: string; techIds: number[]
+  openedAtUtc: string | null; takenAtUtc: string | null; solvedAtUtc: string | null
+  ttoName: string | null; ttrName: string | null; ttoDueUtc: string | null; ttrDueUtc: string | null
+  ttoLate: boolean; ttrLate: boolean
+  takeDelaySec: number | null; solveDelaySec: number | null; waitingSec: number | null; actionTimeSec: number | null
+}
+export interface SlaReport {
+  generatedAtUtc: string; durationMs: number; from: string; to: string
+  technicians: PersonRef[]; tickets: SlaReportTicket[]; warnings: string[]
+}
+export interface SlaReportResponse { report: SlaReport | null; error: string | null; throttledSeconds?: number | null }

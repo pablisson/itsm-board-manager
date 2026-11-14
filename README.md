@@ -130,6 +130,7 @@ Coloque um proxy com HTTPS na frente (Nginx, Caddy, Traefik ou o TLS do próprio
 
 ## 6. Endpoints
 - `GET /api/board`: snapshot em cache (`BOARD_CACHE_SECONDS`).
+- `GET /api/reports/sla?from=AAAA-MM&to=AAAA-MM`: tickets abertos no período (até 12 meses) com prazos de SLA, flags "excedido" do ITSM e tempos (assumido, solução útil, pendente, lançado em tarefas). Base da aba **Relatórios SLA**.
 - `GET /api/plan?month=AAAA-MM`: itens planejados do mês (técnico × dia), mais a contagem de dias planejados por ticket.
 - `POST /api/plan` `{techId, techName, ticketId, title, day}`: planeja um ticket num dia. `PUT /api/plan/{id}` `{day}` move o item. `DELETE /api/plan/{id}` remove o item.
 - `GET /api/plan/health`: diz se o banco do planejamento está configurado e acessível.

@@ -236,7 +236,7 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
         };
     }
 
-    private async Task<string> ResolveUserAsync(GlpiClient.Session s, int id, ConcurrentBag<string> warnings, CancellationToken ct)
+    internal async Task<string> ResolveUserAsync(GlpiClient.Session s, int id, ConcurrentBag<string> warnings, CancellationToken ct)
     {
         try
         {
@@ -254,7 +254,7 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
         return $"Usuário #{id}";
     }
 
-    private async Task<Dictionary<int, string>> TakeIntoAccountDatesAsync(GlpiClient.Session s, List<int> ids, ConcurrentBag<string> warnings, CancellationToken ct)
+    internal async Task<Dictionary<int, string>> TakeIntoAccountDatesAsync(GlpiClient.Session s, List<int> ids, ConcurrentBag<string> warnings, CancellationToken ct)
     {
         var result = new ConcurrentDictionary<int, string>();
         using var gate = new SemaphoreSlim(4);
@@ -364,7 +364,7 @@ public sealed class BoardService(GlpiClient glpi, BoardSettings settings, ILogge
     }
 
     /// <summary>A busca do GLPI pode devolver "&#62;" como separador de hierarquia (ex.: "TI &#62; Rede").</summary>
-    private static string? CleanDropdown(string? s) => s is null ? null : System.Net.WebUtility.HtmlDecode(s).Replace(' ', ' ').Trim();
+    internal static string? CleanDropdown(string? s) => s is null ? null : System.Net.WebUtility.HtmlDecode(s).Replace(' ', ' ').Trim();
 
     internal static DateTimeOffset? ToUtc(string? glpiLocal, BoardSettings st)
     {

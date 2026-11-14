@@ -17,6 +17,7 @@ builder.Services.AddSingleton(sp => new GlpiClient(
 builder.Services.AddSingleton<BoardService>();
 builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<TimelineService>();
+builder.Services.AddSingleton<SlaReportService>();
 builder.Services.AddSingleton<PlanStore>();
 
 var app = builder.Build();
@@ -87,7 +88,20 @@ app.MapGet("/api/reports/monthly", async (ReportService r, int? months, bool? re
     return Results.Ok(await r.GetMonthlyAsync(months ?? 12, refresh == true, ct));
 });
 
-app.MapGet("/api/timeline", async (TimelineService tl, int tech, CancellationToken ct) =>
+app.MapGet("/api/reports/sla", async (SlaReportService r, string? from, string? to, bool? refresh, CancellationToken ct) =>
+{
+    if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });
+    var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, settings.GlpiTimeZone);
+    var cur = new DateOnly(nowLocal.Year, nowLocal.Month, 1);
+    static DateOnly? Month(string? s) => DateOnly.TryParseExact(s + "-01", "yyyy-MM-dd", out var d) && d.Year is >= 2000 and <= 2100 ? d : null;
+    var f = string.IsNullOrEmpty(from) ? cur : Month(from);
+    var t = string.IsNullOrEmpty(to) ? f : Month(to);
+    if (f is null || t is null || t < f || t.Value > f.Value.AddMonths(SlaReportService.MaxMonths - 1))
+        return Results.BadRequest(new { errors = new[] { $"Período inválido (use from/to = AAAA-MM, até {SlaReportService.MaxMonths} meses)." } });
+    return Results.Ok(await r.GetAsync(f.Value, t.Value, refresh == true, ct));
+});
+
+app.MapGet("/api/timeline",async (TimelineService tl, int tech, CancellationToken ct) =>
 {
     if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });
     try { return Results.Ok(await tl.GetAsync(tech, ct)); }
