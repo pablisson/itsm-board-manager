@@ -10,3 +10,6 @@ frontend/dist/
 .vs/
 .vscode/
 publish/
+
+# pacotes gerados localmente
+*.zip
