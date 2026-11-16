@@ -275,6 +275,12 @@ label.check input { accent-color: var(--blue); width: 16px; height: 16px; }
 .plan-grid .pl-day { width: var(--pl-day); min-width: var(--pl-day); text-align: center; padding: 4px 6px; }
 .pl-day span { display: block; font-size: 11px; font-weight: 500; text-transform: capitalize; }
 .pl-day b { display: block; font-size: 15px; color: var(--text); }
+.pl-copy { display: inline-flex; align-items: center; gap: 3px; margin-top: 3px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--muted); font-size: 12px; line-height: 1.4; cursor: pointer; }
+.pl-copy small { font-size: 10px; font-weight: 600; }
+.pl-copy:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.pl-copy:disabled { opacity: .35; cursor: default; }
+.pl-copy.ok { border-color: var(--green, #2e7d32); color: var(--green, #2e7d32); }
+.pl-copied { color: var(--green, #2e7d32); font-weight: 600; }
 .plan-grid th.we, .plan-grid td.we { background: color-mix(in srgb, var(--gray-bg) 70%, var(--surface)); }
 .plan-grid thead th.today { background: var(--blue-bg); color: var(--blue); box-shadow: inset 0 -3px 0 var(--blue); }
 .plan-grid thead th.today b { color: var(--blue); }

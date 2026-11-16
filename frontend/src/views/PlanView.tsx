@@ -108,6 +108,51 @@ export default function PlanView({ snap, techIds, match }: {
 
   const plannedTotal = data?.items.length ?? 0
 
+  // ---------- copiar as tarefas de um dia (por técnico) ----------
+  const [copied, setCopied] = useState<{ day: string; text: string } | null>(null)
+  useEffect(() => { if (!copied) return; const t = setTimeout(() => setCopied(null), 3500); return () => clearTimeout(t) }, [copied])
+  // URL do ticket no ITSM: a do board, ou montada a partir da base de qualquer ticket conhecido
+  const ticketUrl = useMemo(() => {
+    const sample = [...tickets.values()].find(p => p.ticket.url)?.ticket.url
+    return (id: number) => tickets.get(id)?.ticket.url ?? (sample ? sample.replace(/([?&]id=)\d+/, `$1${id}`) : null)
+  }, [tickets])
+  const dayGroups = (day: string) => rows
+    .map(r => ({ tech: r.name, items: (r.cells.get(day) ?? []).map(it => ({ id: it.ticketId, title: tickets.get(it.ticketId)?.ticket.title ?? it.title ?? '', url: ticketUrl(it.ticketId) })) }))
+    .filter(g => g.items.length > 0)
+  const copyDay = async (day: string, wd: string) => {
+    const groups = dayGroups(day)
+    if (groups.length === 0) return
+    const total = groups.reduce((n, g) => n + g.items.length, 0)
+    const head = `Planejamento de ${wd} ${shortDate(day)}/${day.slice(0, 4)} — ${total} tarefa(s)`
+    const text = [head, '', ...groups.flatMap(g => [
+      `${g.tech} (${g.items.length})`,
+      ...g.items.map(i => `• #${i.id} — ${i.title} — Técnico: ${g.tech}${i.url ? ` — ${i.url}` : ''}`),
+      '',
+    ])].join('\n').trimEnd()
+    const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
+    const html = `<p><b>${esc(head)}</b></p>` + groups.map(g =>
+      `<p><b>${esc(g.tech)}</b> (${g.items.length})</p><ul>` +
+      g.items.map(i => `<li>${i.url ? `<a href="${esc(i.url)}">#${i.id}</a>` : `#${i.id}`} — ${esc(i.title)} — Técnico: ${esc(g.tech)}${i.url ? ` — <a href="${esc(i.url)}">${esc(i.url)}</a>` : ''}</li>`).join('') +
+      '</ul>').join('')
+    try {
+      if (window.isSecureContext && navigator.clipboard) {
+        if (typeof ClipboardItem !== 'undefined' && navigator.clipboard.write) {
+          await navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([text], { type: 'text/plain' }), 'text/html': new Blob([html], { type: 'text/html' }) })])
+        } else await navigator.clipboard.writeText(text)
+      } else {
+        // fallback para http fora de localhost (Clipboard API indisponível)
+        const ta = document.createElement('textarea')
+        ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0'
+        document.body.appendChild(ta); ta.select()
+        const ok = document.execCommand('copy'); ta.remove()
+        if (!ok) throw new Error('o navegador bloqueou a cópia')
+      }
+      setCopied({ day, text: `${total} tarefa(s) de ${groups.length} técnico(s) em ${shortDate(day)} copiada(s)` })
+    } catch (e) {
+      setError(`Não foi possível copiar: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
   // ---------- mutações (otimistas, com rollback) ----------
   const mutate = async (optimistic: (items: PlanItem[]) => PlanItem[], call: () => Promise<unknown>) => {
     if (!data) return
@@ -169,7 +214,7 @@ export default function PlanView({ snap, techIds, match }: {
         <p className="plan-hint">
           Arraste um ticket da 2ª coluna para um dia. Entre dias: arraste para mover · <kbd>Ctrl</kbd>+arrastar para copiar · de volta ao backlog (ou ×) para desplanejar.
         </p>
-        <span className="plan-stats">{busy ? 'carregando…' : `${plannedTotal} planejamento(s) no mês`}</span>
+        <span className="plan-stats" role="status">{copied ? <span className="pl-copied">✓ {copied.text}</span> : busy ? 'carregando…' : `${plannedTotal} planejamento(s) no mês`}</span>
       </div>
 
       {error && <div className="banner error">{error} <button type="button" className="link" onClick={() => void load(month)}>Tentar novamente</button></div>}
@@ -180,11 +225,19 @@ export default function PlanView({ snap, techIds, match }: {
             <tr>
               <th className="pl-tech pl-sticky">Técnico</th>
               <th className="pl-backlog pl-sticky">Tickets atribuídos</th>
-              {days.map(d => (
-                <th key={d.iso} data-day={d.iso} className={`pl-day${d.weekend ? ' we' : ''}${d.iso === today ? ' today' : ''}`}>
-                  <span>{d.wd}</span><b>{d.day}</b>
-                </th>
-              ))}
+              {days.map(d => {
+                const n = rows.reduce((s, r) => s + (r.cells.get(d.iso)?.length ?? 0), 0)
+                return (
+                  <th key={d.iso} data-day={d.iso} className={`pl-day${d.weekend ? ' we' : ''}${d.iso === today ? ' today' : ''}`}>
+                    <span>{d.wd}</span><b>{d.day}</b>
+                    <button type="button" className={`pl-copy${copied?.day === d.iso ? ' ok' : ''}`} disabled={n === 0}
+                      title={n ? `Copiar as ${n} tarefa(s) do dia ${shortDate(d.iso)} por técnico (link, título, ID e técnico)` : 'Nenhuma tarefa neste dia'}
+                      aria-label={`Copiar tarefas de ${shortDate(d.iso)}`} onClick={() => void copyDay(d.iso, d.wd)}>
+                      {copied?.day === d.iso ? '✓' : '⧉'}{n > 0 && <small>{n}</small>}
+                    </button>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           <tbody>
