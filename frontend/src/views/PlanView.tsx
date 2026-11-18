@@ -11,6 +11,8 @@ interface PlanResponse { month: string; from: string; to: string; today: string;
 type Drag = { techId: number; ticketId: number; title: string; itemId?: number; fromDay?: string }
 
 const OPEN = new Set<BoardColumnKey>(['inProgress', 'blocked', 'unassigned'])
+/** altura mínima (px) da lista "Tickets atribuídos" antes de rolar — igual ao max-height do CSS */
+const BACKLOG_MIN = 232
 const pad = (n: number) => String(n).padStart(2, '0')
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` }
 const monthOf = (iso: string) => iso.slice(0, 7)
@@ -298,6 +300,30 @@ export default function PlanView({ snap, techIds, match }: {
     else void plan(d, key) // do backlog, ou Ctrl+arrastar = copiar para outro dia
   }
 
+  // "Tickets atribuídos" ocupa toda a altura da linha do técnico: quando os dias têm mais itens
+  // que o limite padrão da lista, ela cresce até a altura do conteúdo do dia mais cheio
+  const gridRef = useRef<HTMLTableElement>(null)
+  useLayoutEffect(() => {
+    const fit = () => {
+      const body = gridRef.current?.tBodies[0]
+      if (!body) return
+      for (const tr of Array.from(body.rows)) {
+        const list = tr.querySelector<HTMLElement>('.pl-backlog-list')
+        if (!list) continue
+        let tallest = 0
+        for (const td of Array.from(tr.querySelectorAll<HTMLElement>('td.pl-cell'))) {
+          const first = td.firstElementChild, last = td.lastElementChild
+          if (first && last) tallest = Math.max(tallest, last.getBoundingClientRect().bottom - first.getBoundingClientRect().top)
+        }
+        const h = `${Math.max(BACKLOG_MIN, Math.ceil(tallest))}px`
+        if (list.style.maxHeight !== h) list.style.maxHeight = h
+      }
+    }
+    fit()
+    window.addEventListener('resize', fit)
+    return () => window.removeEventListener('resize', fit)
+  })
+
   const stateOf = (ticketId: number) => {
     const p = tickets.get(ticketId)
     if (!p) return 'gone'
@@ -393,7 +419,7 @@ export default function PlanView({ snap, techIds, match }: {
       {error && <div className="banner error">{error} <button type="button" className="link" onClick={() => void load(month)}>Tentar novamente</button></div>}
 
       <div className={`plan-scroll${drag ? ' dragging' : ''}`} ref={scroller}>
-        <table className="plan-grid">
+        <table className="plan-grid" ref={gridRef}>
           <thead>
             <tr>
               <th className="pl-tech pl-sticky">Técnico</th>
