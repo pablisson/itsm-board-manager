@@ -25,6 +25,39 @@ const daysOf = (m: string) => {
   })
 }
 const shortDate = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
+const weekday = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')
+const monthName = (m: string) => new Date(`${m}-15T12:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+
+interface CopyGroup { tech: string; items: { id: number; title: string; url: string | null; added?: boolean; status?: string }[] }
+interface SolvedImport {
+  from: string; to: string; tickets: number; added: number; existing: number
+  items: { day: string; techId: number; techName: string; ticketId: number; title: string; url: string; status: number; statusLabel: string; entity: string | null; added: boolean }[]
+  withoutTechnician: { ticketId: number; title: string; url: string; day: string }[]
+  warnings: string[]
+}
+interface CopySection { day: string; groups: CopyGroup[] }
+
+/** texto puro + HTML (links clicáveis ao colar no Teams/Outlook) das tarefas, por dia e técnico */
+function buildCopy(sections: CopySection[], mode: 'day' | 'month') {
+  const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
+  const total = sections.reduce((n, s) => n + s.groups.reduce((m, g) => m + g.items.length, 0), 0)
+  const techs = new Set(sections.flatMap(s => s.groups.map(g => g.tech))).size
+  const first = sections[0]?.day ?? ''
+  const head = mode === 'day'
+    ? `Planejamento de ${weekday(first)} ${shortDate(first)}/${first.slice(0, 4)} — ${total} tarefa(s)`
+    : `Planejamento de ${monthName(first.slice(0, 7))} — ${total} tarefa(s) em ${sections.length} dia(s)`
+  const line = (g: CopyGroup, i: CopyGroup['items'][number]) => `• #${i.id} — ${i.title} — Técnico: ${g.tech}${i.url ? ` — ${i.url}` : ''}`
+  const lineHtml = (g: CopyGroup, i: CopyGroup['items'][number]) =>
+    `<li>${i.url ? `<a href="${esc(i.url)}">#${i.id}</a>` : `#${i.id}`} — ${esc(i.title)} — Técnico: ${esc(g.tech)}${i.url ? ` — <a href="${esc(i.url)}">${esc(i.url)}</a>` : ''}</li>`
+  const text = [head, '', ...sections.flatMap(s => [
+    ...(mode === 'month' ? [`=== ${weekday(s.day)} ${shortDate(s.day)} ===`] : []),
+    ...s.groups.flatMap(g => [`${g.tech} (${g.items.length})`, ...g.items.map(i => line(g, i)), '']),
+  ])].join('\n').trimEnd()
+  const html = `<p><b>${esc(head)}</b></p>` + sections.map(s =>
+    (mode === 'month' ? `<h3>${esc(`${weekday(s.day)} ${shortDate(s.day)}`)}</h3>` : '') +
+    s.groups.map(g => `<p><b>${esc(g.tech)}</b> (${g.items.length})</p><ul>${g.items.map(i => lineHtml(g, i)).join('')}</ul>`).join('')).join('')
+  return { text, html, total, techs }
+}
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(apiUrl(path), { credentials: 'same-origin', ...init, headers: init?.body ? { 'Content-Type': 'application/json' } : undefined })
@@ -116,24 +149,38 @@ export default function PlanView({ snap, techIds, match }: {
     const sample = [...tickets.values()].find(p => p.ticket.url)?.ticket.url
     return (id: number) => tickets.get(id)?.ticket.url ?? (sample ? sample.replace(/([?&]id=)\d+/, `$1${id}`) : null)
   }, [tickets])
-  const dayGroups = (day: string) => rows
-    .map(r => ({ tech: r.name, items: (r.cells.get(day) ?? []).map(it => ({ id: it.ticketId, title: tickets.get(it.ticketId)?.ticket.title ?? it.title ?? '', url: ticketUrl(it.ticketId) })) }))
-    .filter(g => g.items.length > 0)
-  const copyDay = async (day: string, wd: string) => {
-    const groups = dayGroups(day)
-    if (groups.length === 0) return
-    const total = groups.reduce((n, g) => n + g.items.length, 0)
-    const head = `Planejamento de ${wd} ${shortDate(day)}/${day.slice(0, 4)} — ${total} tarefa(s)`
-    const text = [head, '', ...groups.flatMap(g => [
-      `${g.tech} (${g.items.length})`,
-      ...g.items.map(i => `• #${i.id} — ${i.title} — Técnico: ${g.tech}${i.url ? ` — ${i.url}` : ''}`),
-      '',
-    ])].join('\n').trimEnd()
-    const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
-    const html = `<p><b>${esc(head)}</b></p>` + groups.map(g =>
-      `<p><b>${esc(g.tech)}</b> (${g.items.length})</p><ul>` +
-      g.items.map(i => `<li>${i.url ? `<a href="${esc(i.url)}">#${i.id}</a>` : `#${i.id}`} — ${esc(i.title)} — Técnico: ${esc(g.tech)}${i.url ? ` — <a href="${esc(i.url)}">${esc(i.url)}</a>` : ''}</li>`).join('') +
-      '</ul>').join('')
+  // itens visíveis com os filtros do topo (técnicos + texto/entidade)
+  const visible = useCallback((it: PlanItem) => {
+    if (techIds !== null && !techIds.has(it.techId)) return false
+    const t = tickets.get(it.ticketId)?.ticket
+    return t ? match(t) : match({ id: it.ticketId, title: it.title ?? '', technicians: [], assignedGroups: [] } as unknown as BoardTicket)
+  }, [techIds, tickets, match])
+  const knownTech = useMemo(() => new Map(rows.map(r => [r.id, r.name])), [rows])
+  /** agrupa por técnico (ordem alfabética) */
+  const toGroups = useCallback((items: PlanItem[]): CopyGroup[] => {
+    const by = new Map<number, CopyGroup>()
+    for (const it of [...items].sort((a, b) => a.position - b.position)) {
+      const tech = it.techName ?? knownTech.get(it.techId) ?? `Técnico #${it.techId}`
+      const g = by.get(it.techId) ?? by.set(it.techId, { tech, items: [] }).get(it.techId)!
+      g.items.push({ id: it.ticketId, title: tickets.get(it.ticketId)?.ticket.title ?? it.title ?? '', url: ticketUrl(it.ticketId) })
+    }
+    return [...by.values()].sort((a, b) => a.tech.localeCompare(b.tech, 'pt-BR'))
+  }, [knownTech, tickets, ticketUrl])
+  /** seções por dia (ordem cronológica) */
+  const toSections = useCallback((items: PlanItem[]): CopySection[] => {
+    const byDay = new Map<string, PlanItem[]>()
+    for (const it of items) (byDay.get(it.day) ?? byDay.set(it.day, []).get(it.day)!).push(it)
+    return [...byDay.keys()].sort().map(day => ({ day, groups: toGroups(byDay.get(day)!) }))
+  }, [toGroups])
+
+  const copyDay = async (day: string) => {
+    const sections = toSections((data?.items ?? []).filter(it => it.day === day && visible(it)))
+    if (sections.length === 0) return
+    const r = await copySections(sections, 'day')
+    if (r) setCopied({ day, text: `${r.total} tarefa(s) de ${r.techs} técnico(s) em ${shortDate(day)} copiada(s)` })
+  }
+  const copySections = async (sections: CopySection[], mode: 'day' | 'month') => {
+    const { text, html, total, techs } = buildCopy(sections, mode)
     try {
       if (window.isSecureContext && navigator.clipboard) {
         if (typeof ClipboardItem !== 'undefined' && navigator.clipboard.write) {
@@ -147,11 +194,66 @@ export default function PlanView({ snap, techIds, match }: {
         const ok = document.execCommand('copy'); ta.remove()
         if (!ok) throw new Error('o navegador bloqueou a cópia')
       }
-      setCopied({ day, text: `${total} tarefa(s) de ${groups.length} técnico(s) em ${shortDate(day)} copiada(s)` })
+      return { total, techs }
     } catch (e) {
       setError(`Não foi possível copiar: ${e instanceof Error ? e.message : String(e)}`)
+      return null
     }
   }
+
+  // ---------- buscar no ITSM os solucionados/fechados de um dia ou mês e colocar no planejamento ----------
+  const [findMode, setFindMode] = useState<'day' | 'month'>('day')
+  const [findDay, setFindDay] = useState(today)
+  const [findMonth, setFindMonth] = useState(() => monthOf(today))
+  const [found, setFound] = useState<{ mode: 'day' | 'month'; key: string; sections: CopySection[]; res: SolvedImport } | null>(null)
+  const [finding, setFinding] = useState(false)
+  const [foundCopied, setFoundCopied] = useState(false)
+  const [findOpen, setFindOpen] = useState(false)
+  const findRef = useRef<HTMLDivElement>(null)
+  // fecha a caixa ao clicar fora ou com Esc
+  useEffect(() => {
+    if (!findOpen) return
+    const onDown = (e: MouseEvent) => { if (!findRef.current?.contains(e.target as Node)) setFindOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFindOpen(false) }
+    document.addEventListener('mousedown', onDown); document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [findOpen])
+  const search = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    setFindOpen(false)
+    const key = findMode === 'day' ? findDay : findMonth
+    if (!key) return
+    const m = monthOf(key)
+    const from = findMode === 'day' ? key : `${m}-01`
+    const to = findMode === 'day' ? key : `${m}-${pad(daysOf(m).length)}`
+    setFinding(true); setFoundCopied(false)
+    try {
+      const r = await fetch(apiUrl('/api/plan/import-solved'), {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'board' },
+        body: JSON.stringify({ from, to }),
+      })
+      const body = await r.json().catch(() => null)
+      if (!r.ok) throw new Error(body?.errors?.join(' ') ?? `HTTP ${r.status}`)
+      const res = body as SolvedImport
+      // agrupa por dia e técnico
+      const byDay = new Map<string, Map<string, CopyGroup>>()
+      for (const it of res.items) {
+        const techs = byDay.get(it.day) ?? byDay.set(it.day, new Map()).get(it.day)!
+        const g = techs.get(it.techName) ?? techs.set(it.techName, { tech: it.techName, items: [] }).get(it.techName)!
+        g.items.push({ id: it.ticketId, title: it.title, url: it.url, added: it.added, status: it.statusLabel })
+      }
+      const sections = [...byDay.keys()].sort().map(day => ({ day, groups: [...byDay.get(day)!.values()].sort((a, b) => a.tech.localeCompare(b.tech, 'pt-BR')) }))
+      setFound({ mode: findMode, key, sections, res })
+      setError(null)
+      // mostra os itens na grade: vai para o mês buscado (ou recarrega o atual)
+      if (m === month) await load(month, true)
+      else { scrolledFor.current = null; setMonth(m) }
+    } catch (err) { setError(`Não foi possível buscar no ITSM: ${err instanceof Error ? err.message : String(err)}`) }
+    finally { setFinding(false) }
+  }
+  const foundTotal = found ? found.sections.reduce((n, s) => n + s.groups.reduce((m, g) => m + g.items.length, 0), 0) : 0
+  const foundTitle = found ? (found.mode === 'day' ? `${weekday(found.key)} ${shortDate(found.key)}/${found.key.slice(0, 4)}` : monthName(found.key)) : ''
 
   // ---------- mutações (otimistas, com rollback) ----------
   const mutate = async (optimistic: (items: PlanItem[]) => PlanItem[], call: () => Promise<unknown>) => {
@@ -210,12 +312,83 @@ export default function PlanView({ snap, techIds, match }: {
           <input type="month" value={month} onChange={e => e.target.value && setMonth(e.target.value)} aria-label="Mês" />
           <button type="button" onClick={() => setMonth(m => shiftMonth(m, 1))} aria-label="Próximo mês">›</button>
           {month !== monthOf(today) && <button type="button" className="link" onClick={() => { scrolledFor.current = null; setMonth(monthOf(today)) }}>Ir para hoje</button>}
+          <div className="pl-find-wrap" ref={findRef}>
+            <button type="button" className={`pl-find-btn${findOpen ? ' on' : ''}`} aria-expanded={findOpen} aria-haspopup="dialog"
+              title="Buscar no ITSM os tickets solucionados/fechados e colocar no planejamento" onClick={() => setFindOpen(o => !o)}>
+              {finding ? '⏳' : '✓'} Solucionados no ITSM <span aria-hidden>▾</span>
+            </button>
+            {findOpen && (
+              <form className="pl-find" role="dialog" aria-label="Solucionados/fechados no ITSM" onSubmit={e => void search(e)}>
+                <span className="pl-find-label">Solucionados/fechados no ITSM</span>
+                <div className="pl-find-row">
+                  <div className="pl-seg" role="radiogroup" aria-label="Período">
+                    <button type="button" role="radio" aria-checked={findMode === 'day'} className={findMode === 'day' ? 'on' : ''} onClick={() => setFindMode('day')}>Dia</button>
+                    <button type="button" role="radio" aria-checked={findMode === 'month'} className={findMode === 'month' ? 'on' : ''} onClick={() => setFindMode('month')}>Mês</button>
+                  </div>
+                  {findMode === 'day'
+                    ? <input type="date" value={findDay} onChange={e => setFindDay(e.target.value)} aria-label="Dia" required autoFocus />
+                    : <input type="month" value={findMonth} onChange={e => setFindMonth(e.target.value)} aria-label="Mês" required autoFocus />}
+                </div>
+                <button type="submit" className="primary" disabled={finding}>{finding ? 'Buscando no ITSM…' : '🔍 Buscar e planejar'}</button>
+                <span className="pl-find-note">Cada ticket entra no dia em que foi solucionado, na linha de cada técnico atribuído.</span>
+              </form>
+            )}
+          </div>
         </div>
         <p className="plan-hint">
           Arraste um ticket da 2ª coluna para um dia. Entre dias: arraste para mover · <kbd>Ctrl</kbd>+arrastar para copiar · de volta ao backlog (ou ×) para desplanejar.
         </p>
         <span className="plan-stats" role="status">{copied ? <span className="pl-copied">✓ {copied.text}</span> : busy ? 'carregando…' : `${plannedTotal} planejamento(s) no mês`}</span>
       </div>
+
+      {found && (
+        <section className="pl-found" aria-label="Itens encontrados">
+          <header>
+            <h3>Solucionados/fechados · {foundTitle} <small>
+              {found.res.tickets} ticket(s) no ITSM · <b className="pl-new">{found.res.added} adicionado(s) ao planejamento</b>{found.res.existing > 0 && ` · ${found.res.existing} já estava(m)`}
+              {found.mode === 'month' && ` · ${found.sections.length} dia(s)`}
+            </small></h3>
+            <div className="pl-found-actions">
+              <button type="button" className={foundCopied ? 'ok' : ''} disabled={foundTotal === 0}
+                onClick={async () => { if (await copySections(found.sections, found.mode)) setFoundCopied(true) }}>
+                {foundCopied ? '✓ Copiado' : '⧉ Copiar tudo'}
+              </button>
+              <button type="button" className="pl-x-btn" aria-label="Fechar" onClick={() => setFound(null)}>×</button>
+            </div>
+          </header>
+          {foundTotal === 0 && <p className="pl-none">Nenhum ticket com técnico foi solucionado ou fechado {found.mode === 'day' ? 'neste dia' : 'neste mês'} no ITSM.</p>}
+          {found.res.withoutTechnician.length > 0 && (
+            <p className="pl-found-warn">⚠ {found.res.withoutTechnician.length} ticket(s) sem técnico atribuído não entraram no planejamento:{' '}
+              {found.res.withoutTechnician.map((t, i) => <span key={t.ticketId}>{i > 0 && ', '}<a href={t.url} target="_blank" rel="noopener noreferrer" title={t.title}>#{t.ticketId}</a></span>)}
+            </p>
+          )}
+          {found.res.warnings.length > 0 && <p className="pl-found-warn">⚠ {found.res.warnings.join(' · ')}</p>}
+          <div className="pl-found-body">
+            {found.sections.map(s => (
+              <div key={s.day} className="pl-found-day">
+                {found.mode === 'month' && (
+                  <h4>{weekday(s.day)} {shortDate(s.day)}
+                    <button type="button" className="link" onClick={() => void copySections([s], 'day').then(r => r && setCopied({ day: s.day, text: `${r.total} tarefa(s) de ${r.techs} técnico(s) em ${shortDate(s.day)} copiada(s)` }))}>copiar dia</button>
+                  </h4>
+                )}
+                {s.groups.map(g => (
+                  <div key={g.tech} className="pl-found-tech">
+                    <b>{g.tech}</b> <span className="pl-found-n">({g.items.length})</span>
+                    <ul>{g.items.map(i => (
+                      <li key={i.id}>
+                        {i.url ? <a href={i.url} target="_blank" rel="noopener noreferrer">#{i.id}</a> : <span>#{i.id}</span>} {i.title}
+                        {i.status && <span className="pl-found-st">{i.status}</span>}
+                        {i.added === true && <span className="pl-tag new">novo</span>}
+                        {i.added === false && <span className="pl-tag">já estava</span>}
+                      </li>
+                    ))}</ul>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {error && <div className="banner error">{error} <button type="button" className="link" onClick={() => void load(month)}>Tentar novamente</button></div>}
 
@@ -232,7 +405,7 @@ export default function PlanView({ snap, techIds, match }: {
                     <span>{d.wd}</span><b>{d.day}</b>
                     <button type="button" className={`pl-copy${copied?.day === d.iso ? ' ok' : ''}`} disabled={n === 0}
                       title={n ? `Copiar as ${n} tarefa(s) do dia ${shortDate(d.iso)} por técnico (link, título, ID e técnico)` : 'Nenhuma tarefa neste dia'}
-                      aria-label={`Copiar tarefas de ${shortDate(d.iso)}`} onClick={() => void copyDay(d.iso, d.wd)}>
+                      aria-label={`Copiar tarefas de ${shortDate(d.iso)}`} onClick={() => void copyDay(d.iso)}>
                       {copied?.day === d.iso ? '✓' : '⧉'}{n > 0 && <small>{n}</small>}
                     </button>
                   </th>

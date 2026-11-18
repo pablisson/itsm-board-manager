@@ -20,6 +20,7 @@ builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<TimelineService>();
 builder.Services.AddSingleton<SlaReportService>();
 builder.Services.AddSingleton<PlanStore>();
+builder.Services.AddSingleton<SolvedImportService>();
 builder.Services.AddSingleton<PmStore>();
 builder.Services.AddSingleton<PmGlpi>();
 builder.Services.AddSingleton<PmService>();
@@ -143,6 +144,20 @@ plan.MapPost("", async (PlanStore store, PlanCreate body, CancellationToken ct) 
 {
     if (body.TechId <= 0 || body.TicketId <= 0 || !ValidDay(body.Day)) return Results.BadRequest(new { errors = new[] { "Dados inválidos." } });
     return Results.Ok(await store.AddAsync(body, ct));
+});
+
+// busca no ITSM os solucionados/fechados no período e coloca no dia da solução
+plan.MapPost("/import-solved", async (SolvedImportService svc, SolvedImportRequest body, HttpRequest req, CancellationToken ct) =>
+{
+    if (req.Headers["X-Requested-With"] != "board") return Results.BadRequest(new { errors = new[] { "Requisição inválida." } });
+    if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });
+    if (!ValidDay(body.From) || body.To < body.From || body.To.DayNumber - body.From.DayNumber >= SolvedImportService.MaxDays)
+        return Results.BadRequest(new { errors = new[] { $"Período inválido (até {SolvedImportService.MaxDays} dias)." } });
+    try { return Results.Ok(await svc.ImportAsync(body.From, body.To, ct)); }
+    catch (Exception ex) when (ex is GlpiException or HttpRequestException or System.Text.Json.JsonException)
+    {
+        return Results.Json(new { errors = new[] { ex.Message } }, statusCode: 502);
+    }
 });
 
 plan.MapPut("/{id:long}", async (PlanStore store, long id, PlanMove body, CancellationToken ct) =>

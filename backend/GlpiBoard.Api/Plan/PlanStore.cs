@@ -108,6 +108,30 @@ public sealed class PlanStore(BoardSettings settings, ILogger<PlanStore> log) : 
         return (await ReadAllAsync(cmd, ct))[0];
     }
 
+    /// <summary>Insere vários itens de uma vez; os que já existem (técnico+ticket+dia) ficam como estão. Devolve as chaves inseridas.</summary>
+    public async Task<HashSet<(int TechId, int TicketId, DateOnly Day)>> ImportAsync(IReadOnlyList<PlanCreate> items, CancellationToken ct)
+    {
+        var added = new HashSet<(int, int, DateOnly)>();
+        if (items.Count == 0) return added;
+        var ds = await DataSourceAsync(ct);
+        await using var conn = await ds.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        foreach (var c in items)
+        {
+            await using var cmd = new NpgsqlCommand("""
+                INSERT INTO plan_item (tech_id, tech_name, ticket_id, title, day, position)
+                VALUES ($1, $2, $3, $4, $5, COALESCE((SELECT max(position) + 1 FROM plan_item WHERE tech_id = $1 AND day = $5), 0))
+                ON CONFLICT (tech_id, ticket_id, day) DO NOTHING
+                """, conn, tx);
+            cmd.Parameters.AddWithValue(c.TechId); cmd.Parameters.AddWithValue((object?)Trim(c.TechName) ?? DBNull.Value);
+            cmd.Parameters.AddWithValue(c.TicketId); cmd.Parameters.AddWithValue((object?)Trim(c.Title) ?? DBNull.Value);
+            cmd.Parameters.AddWithValue(c.Day);
+            if (await cmd.ExecuteNonQueryAsync(ct) > 0) added.Add((c.TechId, c.TicketId, c.Day));
+        }
+        await tx.CommitAsync(ct);
+        return added;
+    }
+
     /// <summary>Move para outro dia (mesmo técnico). Se o ticket já estiver no dia de destino, apenas remove a origem.</summary>
     public async Task<PlanItem?> MoveAsync(long id, PlanMove m, CancellationToken ct)
     {
