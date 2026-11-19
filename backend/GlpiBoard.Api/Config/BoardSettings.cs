@@ -23,13 +23,20 @@ public sealed class BoardSettings
     public string? AuthPassword { get; init; }            // BOARD_AUTH_PASSWORD
     public bool AuthDisabled { get; init; }               // BOARD_AUTH_DISABLED=true (só para rede interna)
 
-    // --- Banco do planejamento (PostgreSQL) ---
-    public string? PlanDbHost { get; init; }              // PLAN_DB_HOST
-    public int PlanDbPort { get; init; } = 5432;          // PLAN_DB_PORT
-    public string PlanDbName { get; init; } = "board";    // PLAN_DB_NAME
-    public string PlanDbUser { get; init; } = "board";    // PLAN_DB_USER
-    public string? PlanDbPassword { get; init; }          // PLAN_DB_PASSWORD
+    // --- Banco do sistema (MySQL): Planejamento + Gestão de Projetos ---
+    public string? PlanDbHost { get; init; }              // MYSQL_DB_HOST
+    public int PlanDbPort { get; init; } = 3306;          // MYSQL_DB_PORT
+    public string PlanDbName { get; init; } = "board";    // MYSQL_DB_NAME
+    public string PlanDbUser { get; init; } = "board";    // MYSQL_DB_USER
+    public string? PlanDbPassword { get; init; }          // MYSQL_DB_PASSWORD
     public bool PlanDbConfigured => !string.IsNullOrWhiteSpace(PlanDbHost) && !string.IsNullOrEmpty(PlanDbPassword);
+
+    // --- PostgreSQL antigo: só como origem da migração (comando migrate-from-postgres) ---
+    public string? PgSourceHost { get; init; }            // PLAN_DB_HOST
+    public int PgSourcePort { get; init; } = 5432;        // PLAN_DB_PORT
+    public string PgSourceName { get; init; } = "board";  // PLAN_DB_NAME
+    public string PgSourceUser { get; init; } = "board";  // PLAN_DB_USER
+    public string? PgSourcePassword { get; init; }        // PLAN_DB_PASSWORD
 
     public bool UsesUserToken => !string.IsNullOrWhiteSpace(UserToken);
     public bool UsesCredentials => !UsesUserToken && !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
@@ -79,11 +86,16 @@ public sealed class BoardSettings
             AuthUser = S("BOARD_AUTH_USER"),
             AuthPassword = c["BOARD_AUTH_PASSWORD"],
             AuthDisabled = string.Equals(S("BOARD_AUTH_DISABLED"), "true", StringComparison.OrdinalIgnoreCase),
-            PlanDbHost = S("PLAN_DB_HOST"),
-            PlanDbPort = I("PLAN_DB_PORT", 5432),
-            PlanDbName = S("PLAN_DB_NAME") ?? "board",
-            PlanDbUser = S("PLAN_DB_USER") ?? "board",
-            PlanDbPassword = c["PLAN_DB_PASSWORD"],
+            PlanDbHost = S("MYSQL_DB_HOST"),
+            PlanDbPort = I("MYSQL_DB_PORT", 3306),
+            PlanDbName = S("MYSQL_DB_NAME") ?? "board",
+            PlanDbUser = S("MYSQL_DB_USER") ?? "board",
+            PlanDbPassword = c["MYSQL_DB_PASSWORD"],
+            PgSourceHost = S("PLAN_DB_HOST"),
+            PgSourcePort = I("PLAN_DB_PORT", 5432),
+            PgSourceName = S("PLAN_DB_NAME") ?? "board",
+            PgSourceUser = S("PLAN_DB_USER") ?? "board",
+            PgSourcePassword = c["PLAN_DB_PASSWORD"],
         };
     }
 

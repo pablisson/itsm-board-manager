@@ -102,20 +102,25 @@ Para desenvolver o front com hot reload, rode `npm run dev` em `frontend/` com o
 ```bash
 docker compose up -d --build
 ```
-O board sobe em `http://localhost:5080` e o PostgreSQL do Planejamento fica no volume nomeado `itsm-board-plan-data`.
-Os dados sobrevivem a restart, `docker compose down`, rebuild e reinício da máquina (os dois serviços usam `restart: unless-stopped`).
-Defina `PLAN_DB_PASSWORD` no `.env` antes da primeira subida.
+O board sobe em `http://localhost:5080`. O banco do sistema é o **MySQL 8.4** (serviço `mysql`, volume `itsm-board-mysql-data`), com o Planejamento e a Gestão de Projetos.
+Os dados sobrevivem a restart, `docker compose down`, rebuild e reinício da máquina (os serviços usam `restart: unless-stopped`).
+Defina `MYSQL_DB_PASSWORD` no `.env` antes da primeira subida. As tabelas são criadas automaticamente; as datas são gravadas em UTC.
 
-> ⚠️ **Nunca** use `docker compose down -v`: o `-v` apaga o volume com o planejamento.
+> ⚠️ **Nunca** use `docker compose down -v`: o `-v` apaga os volumes com os dados.
 
-Backup e restauração do planejamento:
+Backup e restauração:
 ```bash
-docker compose exec -T db pg_dump -U board board > backup-planejamento.sql
-docker compose exec -T db psql -U board -d board < backup-planejamento.sql
+docker compose exec -T mysql sh -c 'mysqldump -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" --single-transaction --no-tablespaces --hex-blob "$MYSQL_DATABASE"' > backup.sql
+docker compose exec -T mysql sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' < backup.sql
 ```
-Para rodar o app fora do Docker (desenvolvimento), suba só o banco com `docker compose up -d db`. O app usa `PLAN_DB_HOST=localhost` e `PLAN_DB_PORT=5433`.
+Para rodar o app fora do Docker (desenvolvimento), suba só o banco com `docker compose up -d mysql`. O app usa `MYSQL_DB_HOST=localhost` e `MYSQL_DB_PORT=3316`.
 
-**Docker sem compose** (sem a aba Planejamento, ou com um PostgreSQL externo via `PLAN_DB_*`):
+**PostgreSQL antigo (migrado em 19/11/2026).** O serviço `db` (volume `itsm-board-plan-data`) continua no ar só para conferência e rollback; a aplicação não grava mais nele.
+- Conferir PostgreSQL × MySQL linha a linha: `docker compose run --rm --no-deps board migrate-from-postgres --verify`
+- A cópia (`migrate-from-postgres` sem `--verify`) substitui o conteúdo do MySQL e é **recusada** depois que a aplicação passou a usar o MySQL (só com `--force`).
+- Rollback para a versão anterior (PostgreSQL): `docker tag itsm-board-board:pg-rollback itsm-board-board:latest` e recriar o container com o compose antigo — os dados gravados no MySQL depois da troca não voltam sozinhos.
+
+**Docker sem compose** (com um MySQL externo via `MYSQL_DB_*`):
 ```bash
 docker build -t glpi-board .
 ```
@@ -169,7 +174,7 @@ O título da página ("Board de chamados · ITSM") é um botão que troca de sis
   - Se mudou só no ITSM (o `date_mod` mudou), traz as mudanças do ITSM.
 - Excluir algo aqui **não** apaga nada no ITSM.
 
-Os dados ficam no mesmo PostgreSQL do Planejamento (tabelas `pm_*`, criadas automaticamente). Os anexos ficam no banco, com até 20 MB por arquivo, e entram no `pg_dump`.
+Os dados ficam no mesmo MySQL do Planejamento (tabelas `pm_*`, criadas automaticamente). Os anexos ficam no banco, com até 20 MB por arquivo, e entram no `mysqldump`.
 
 ## 7. Endpoints
 - `GET /api/board`: snapshot em cache (`BOARD_CACHE_SECONDS`).

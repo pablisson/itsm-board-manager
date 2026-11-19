@@ -1,5 +1,6 @@
-using GlpiBoard.Api.Config;
-using Npgsql;
+using GlpiBoard.Api.Data;
+using MySqlConnector;
+using static GlpiBoard.Api.Data.AppDb;
 
 namespace GlpiBoard.Api.Plan;
 
@@ -11,101 +12,49 @@ public sealed record PlanMove(DateOnly Day, int? Position);
 
 public sealed class PlanUnavailableException(string message, Exception? inner = null) : Exception(message, inner);
 
-/// <summary>
-/// Planejamento por técnico/dia guardado no PostgreSQL (volume Docker persistente).
-/// O esquema é criado/atualizado na primeira utilização.
-/// </summary>
-public sealed class PlanStore(BoardSettings settings, ILogger<PlanStore> log) : IAsyncDisposable
+/// <summary>Planejamento por técnico/dia guardado no MySQL (tabela plan_item).</summary>
+public sealed class PlanStore(AppDb db)
 {
-    private readonly SemaphoreSlim _init = new(1, 1);
-    private NpgsqlDataSource? _ds;
-    private bool _ready;
-
-    private const string Schema = """
-        CREATE TABLE IF NOT EXISTS plan_item (
-            id          BIGSERIAL PRIMARY KEY,
-            tech_id     INT          NOT NULL,
-            tech_name   TEXT         NULL,
-            ticket_id   INT          NOT NULL,
-            title       TEXT         NULL,
-            day         DATE         NOT NULL,
-            position    INT          NOT NULL DEFAULT 0,
-            created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
-            updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
-            CONSTRAINT plan_item_unique UNIQUE (tech_id, ticket_id, day)
-        );
-        CREATE INDEX IF NOT EXISTS plan_item_day ON plan_item (day);
-        """;
-
-    public bool Configured => settings.PlanDbConfigured;
-
-    private async Task<NpgsqlDataSource> DataSourceAsync(CancellationToken ct)
-    {
-        if (!Configured) throw new PlanUnavailableException("Banco do planejamento não configurado (PLAN_DB_HOST / PLAN_DB_PASSWORD).");
-        if (_ready) return _ds!;
-        await _init.WaitAsync(ct);
-        try
-        {
-            if (_ready) return _ds!;
-            _ds ??= new NpgsqlDataSourceBuilder(new NpgsqlConnectionStringBuilder
-            {
-                Host = settings.PlanDbHost, Port = settings.PlanDbPort, Database = settings.PlanDbName,
-                Username = settings.PlanDbUser, Password = settings.PlanDbPassword, Timeout = 5,
-            }.ConnectionString).Build();
-            await using var cmd = _ds.CreateCommand(Schema);
-            await cmd.ExecuteNonQueryAsync(ct);
-            _ready = true;
-            log.LogInformation("Banco do planejamento pronto ({Host}:{Port}/{Db}).", settings.PlanDbHost, settings.PlanDbPort, settings.PlanDbName);
-            return _ds;
-        }
-        catch (Exception ex) when (ex is NpgsqlException or TimeoutException or System.Net.Sockets.SocketException)
-        {
-            log.LogWarning(ex, "Banco do planejamento indisponível.");
-            throw new PlanUnavailableException("Banco do planejamento indisponível. Verifique se o container está no ar (docker compose up -d db).", ex);
-        }
-        finally { _init.Release(); }
-    }
+    public bool Configured => db.Configured;
 
     private const string Cols = "id, tech_id, tech_name, ticket_id, title, day, position, updated_at";
-    private static PlanItem Read(NpgsqlDataReader r) => new(
+    private static PlanItem Read(MySqlDataReader r) => new(
         r.GetInt64(0), r.GetInt32(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetInt32(3), r.IsDBNull(4) ? null : r.GetString(4),
-        r.GetFieldValue<DateOnly>(5), r.GetInt32(6), r.GetFieldValue<DateTimeOffset>(7));
+        r.GetFieldValue<DateOnly>(5), r.GetInt32(6), Utc(r, 7));
+
+    internal static DateTimeOffset Utc(MySqlDataReader r, int i) => new(DateTime.SpecifyKind(r.GetDateTime(i), DateTimeKind.Utc));
 
     public async Task<List<PlanItem>> ListAsync(DateOnly from, DateOnly to, CancellationToken ct)
     {
-        var ds = await DataSourceAsync(ct);
-        await using var cmd = ds.CreateCommand($"SELECT {Cols} FROM plan_item WHERE day BETWEEN $1 AND $2 ORDER BY day, tech_id, position, id");
-        cmd.Parameters.AddWithValue(from); cmd.Parameters.AddWithValue(to);
+        await using var conn = await db.OpenAsync(ct);
+        await using var cmd = Cmd(conn, $"SELECT {Cols} FROM plan_item WHERE day BETWEEN $1 AND $2 ORDER BY day, tech_id, position, id", from, to);
         return await ReadAllAsync(cmd, ct);
     }
 
     /// <summary>Quantos dias planejados cada ticket tem (todas as datas), por técnico.</summary>
     public async Task<List<(int TechId, int TicketId, int Days, DateOnly Next)>> CountsAsync(DateOnly today, CancellationToken ct)
     {
-        var ds = await DataSourceAsync(ct);
-        await using var cmd = ds.CreateCommand(
-            "SELECT tech_id, ticket_id, count(*)::int, COALESCE(min(day) FILTER (WHERE day >= $1), max(day)) FROM plan_item GROUP BY tech_id, ticket_id");
-        cmd.Parameters.AddWithValue(today);
+        await using var conn = await db.OpenAsync(ct);
+        await using var cmd = Cmd(conn,
+            "SELECT tech_id, ticket_id, COUNT(*), COALESCE(MIN(CASE WHEN day >= $1 THEN day END), MAX(day)) FROM plan_item GROUP BY tech_id, ticket_id ORDER BY tech_id, ticket_id", today);
         var list = new List<(int, int, int, DateOnly)>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct)) list.Add((r.GetInt32(0), r.GetInt32(1), r.GetInt32(2), r.GetFieldValue<DateOnly>(3)));
+        while (await r.ReadAsync(ct)) list.Add((r.GetInt32(0), r.GetInt32(1), Convert.ToInt32(r.GetValue(2)), r.GetFieldValue<DateOnly>(3)));
         return list;
     }
 
     /// <summary>Planeja o ticket no dia (no fim da célula). Se já existir no mesmo dia/técnico, devolve o existente.</summary>
     public async Task<PlanItem> AddAsync(PlanCreate c, CancellationToken ct)
     {
-        var ds = await DataSourceAsync(ct);
-        await using var cmd = ds.CreateCommand($"""
+        await using var conn = await db.OpenAsync(ct);
+        await using (var ins = Cmd(conn, """
             INSERT INTO plan_item (tech_id, tech_name, ticket_id, title, day, position)
-            VALUES ($1, $2, $3, $4, $5, COALESCE((SELECT max(position) + 1 FROM plan_item WHERE tech_id = $1 AND day = $5), 0))
-            ON CONFLICT (tech_id, ticket_id, day) DO UPDATE SET title = COALESCE(EXCLUDED.title, plan_item.title), updated_at = now()
-            RETURNING {Cols}
-            """);
-        cmd.Parameters.AddWithValue(c.TechId); cmd.Parameters.AddWithValue((object?)Trim(c.TechName) ?? DBNull.Value);
-        cmd.Parameters.AddWithValue(c.TicketId); cmd.Parameters.AddWithValue((object?)Trim(c.Title) ?? DBNull.Value);
-        cmd.Parameters.AddWithValue(c.Day);
-        return (await ReadAllAsync(cmd, ct))[0];
+            SELECT $1, $2, $3, $4, $5, COALESCE(MAX(position) + 1, 0) FROM plan_item WHERE tech_id = $1 AND day = $5
+            ON DUPLICATE KEY UPDATE title = COALESCE(VALUES(title), title), updated_at = UTC_TIMESTAMP(6)
+            """, c.TechId, Trim(c.TechName), c.TicketId, Trim(c.Title), c.Day))
+            await ins.ExecuteNonQueryAsync(ct);
+        await using var get = Cmd(conn, $"SELECT {Cols} FROM plan_item WHERE tech_id = $1 AND ticket_id = $2 AND day = $3", c.TechId, c.TicketId, c.Day);
+        return (await ReadAllAsync(get, ct))[0];
     }
 
     /// <summary>Insere vários itens de uma vez; os que já existem (técnico+ticket+dia) ficam como estão. Devolve as chaves inseridas.</summary>
@@ -113,20 +62,17 @@ public sealed class PlanStore(BoardSettings settings, ILogger<PlanStore> log) : 
     {
         var added = new HashSet<(int, int, DateOnly)>();
         if (items.Count == 0) return added;
-        var ds = await DataSourceAsync(ct);
-        await using var conn = await ds.OpenConnectionAsync(ct);
+        await using var conn = await db.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
         foreach (var c in items)
         {
-            await using var cmd = new NpgsqlCommand("""
+            // "id = id" = não faz nada se já existir (UseAffectedRows: 1 = inserido, 0 = já existia)
+            await using var cmd = Cmd(conn, tx, """
                 INSERT INTO plan_item (tech_id, tech_name, ticket_id, title, day, position)
-                VALUES ($1, $2, $3, $4, $5, COALESCE((SELECT max(position) + 1 FROM plan_item WHERE tech_id = $1 AND day = $5), 0))
-                ON CONFLICT (tech_id, ticket_id, day) DO NOTHING
-                """, conn, tx);
-            cmd.Parameters.AddWithValue(c.TechId); cmd.Parameters.AddWithValue((object?)Trim(c.TechName) ?? DBNull.Value);
-            cmd.Parameters.AddWithValue(c.TicketId); cmd.Parameters.AddWithValue((object?)Trim(c.Title) ?? DBNull.Value);
-            cmd.Parameters.AddWithValue(c.Day);
-            if (await cmd.ExecuteNonQueryAsync(ct) > 0) added.Add((c.TechId, c.TicketId, c.Day));
+                SELECT $1, $2, $3, $4, $5, COALESCE(MAX(position) + 1, 0) FROM plan_item WHERE tech_id = $1 AND day = $5
+                ON DUPLICATE KEY UPDATE id = id
+                """, c.TechId, Trim(c.TechName), c.TicketId, Trim(c.Title), c.Day);
+            if (await cmd.ExecuteNonQueryAsync(ct) == 1) added.Add((c.TechId, c.TicketId, c.Day));
         }
         await tx.CommitAsync(ct);
         return added;
@@ -135,62 +81,53 @@ public sealed class PlanStore(BoardSettings settings, ILogger<PlanStore> log) : 
     /// <summary>Move para outro dia (mesmo técnico). Se o ticket já estiver no dia de destino, apenas remove a origem.</summary>
     public async Task<PlanItem?> MoveAsync(long id, PlanMove m, CancellationToken ct)
     {
-        var ds = await DataSourceAsync(ct);
-        await using var conn = await ds.OpenConnectionAsync(ct);
+        await using var conn = await db.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
         PlanItem? cur;
-        await using (var get = new NpgsqlCommand($"SELECT {Cols} FROM plan_item WHERE id = $1 FOR UPDATE", conn, tx))
-        {
-            get.Parameters.AddWithValue(id);
+        await using (var get = Cmd(conn, tx, $"SELECT {Cols} FROM plan_item WHERE id = $1 FOR UPDATE", id))
             cur = (await ReadAllAsync(get, ct)).FirstOrDefault();
-        }
         if (cur is null) return null;
 
         PlanItem? dup;
-        await using (var q = new NpgsqlCommand($"SELECT {Cols} FROM plan_item WHERE tech_id = $1 AND ticket_id = $2 AND day = $3 AND id <> $4", conn, tx))
-        {
-            q.Parameters.AddWithValue(cur.TechId); q.Parameters.AddWithValue(cur.TicketId); q.Parameters.AddWithValue(m.Day); q.Parameters.AddWithValue(id);
+        await using (var q = Cmd(conn, tx, $"SELECT {Cols} FROM plan_item WHERE tech_id = $1 AND ticket_id = $2 AND day = $3 AND id <> $4", cur.TechId, cur.TicketId, m.Day, id))
             dup = (await ReadAllAsync(q, ct)).FirstOrDefault();
-        }
         if (dup is not null)
         {
-            await using var del = new NpgsqlCommand("DELETE FROM plan_item WHERE id = $1", conn, tx);
-            del.Parameters.AddWithValue(id); await del.ExecuteNonQueryAsync(ct);
+            await using var del = Cmd(conn, tx, "DELETE FROM plan_item WHERE id = $1", id);
+            await del.ExecuteNonQueryAsync(ct);
             await tx.CommitAsync(ct);
             return dup;
         }
 
-        PlanItem moved;
-        await using (var up = new NpgsqlCommand($"""
-            UPDATE plan_item SET day = $2, updated_at = now(),
-              position = COALESCE($3, (SELECT COALESCE(max(position) + 1, 0) FROM plan_item WHERE tech_id = $4 AND day = $2 AND id <> $1))
-            WHERE id = $1 RETURNING {Cols}
-            """, conn, tx))
+        var position = m.Position;
+        if (position is null)
         {
-            up.Parameters.AddWithValue(id); up.Parameters.AddWithValue(m.Day);
-            up.Parameters.AddWithValue((object?)m.Position ?? DBNull.Value).NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer;
-            up.Parameters.AddWithValue(cur.TechId);
-            moved = (await ReadAllAsync(up, ct))[0];
+            await using var mx = Cmd(conn, tx, "SELECT COALESCE(MAX(position) + 1, 0) FROM plan_item WHERE tech_id = $1 AND day = $2 AND id <> $3", cur.TechId, m.Day, id);
+            position = Convert.ToInt32(await mx.ExecuteScalarAsync(ct));
         }
+        await using (var up = Cmd(conn, tx, "UPDATE plan_item SET day = $2, position = $3, updated_at = UTC_TIMESTAMP(6) WHERE id = $1", id, m.Day, position.Value))
+            await up.ExecuteNonQueryAsync(ct);
+        PlanItem moved;
+        await using (var get = Cmd(conn, tx, $"SELECT {Cols} FROM plan_item WHERE id = $1", id))
+            moved = (await ReadAllAsync(get, ct))[0];
         await tx.CommitAsync(ct);
         return moved;
     }
 
     public async Task<bool> DeleteAsync(long id, CancellationToken ct)
     {
-        var ds = await DataSourceAsync(ct);
-        await using var cmd = ds.CreateCommand("DELETE FROM plan_item WHERE id = $1");
-        cmd.Parameters.AddWithValue(id);
+        await using var conn = await db.OpenAsync(ct);
+        await using var cmd = Cmd(conn, "DELETE FROM plan_item WHERE id = $1", id);
         return await cmd.ExecuteNonQueryAsync(ct) > 0;
     }
 
     public async Task<bool> PingAsync(CancellationToken ct)
     {
-        try { var ds = await DataSourceAsync(ct); await using var c = ds.CreateCommand("SELECT 1"); await c.ExecuteScalarAsync(ct); return true; }
+        try { await using var conn = await db.OpenAsync(ct); await using var c = Cmd(conn, "SELECT 1"); await c.ExecuteScalarAsync(ct); return true; }
         catch (PlanUnavailableException) { return false; }
     }
 
-    private static async Task<List<PlanItem>> ReadAllAsync(NpgsqlCommand cmd, CancellationToken ct)
+    private static async Task<List<PlanItem>> ReadAllAsync(MySqlCommand cmd, CancellationToken ct)
     {
         var list = new List<PlanItem>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -199,6 +136,4 @@ public sealed class PlanStore(BoardSettings settings, ILogger<PlanStore> log) : 
     }
 
     private static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim()[..Math.Min(s.Trim().Length, 500)];
-
-    public async ValueTask DisposeAsync() { if (_ds is not null) await _ds.DisposeAsync(); }
 }

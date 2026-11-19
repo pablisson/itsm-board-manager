@@ -9,6 +9,14 @@ using GlpiBoard.Api.Pm;
 // .env é opcional e NUNCA sobrescreve variáveis do sistema operacional / hospedagem.
 DotEnv.LoadIfExists(".env", Path.Combine("..", "..", ".env"));
 
+// migração única PostgreSQL → MySQL (ver Data/PgMigration.cs)
+if (args.Length > 0 && args[0] == "migrate-from-postgres")
+{
+    var cfg = new ConfigurationBuilder().AddEnvironmentVariables().Build();
+    Environment.ExitCode = await GlpiBoard.Api.Data.PgMigration.RunAsync(BoardSettings.FromEnvironment(cfg), args);
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 var settings = BoardSettings.FromEnvironment(builder.Configuration);
 builder.Services.AddSingleton(settings);
@@ -19,6 +27,7 @@ builder.Services.AddSingleton<BoardService>();
 builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<TimelineService>();
 builder.Services.AddSingleton<SlaReportService>();
+builder.Services.AddSingleton<GlpiBoard.Api.Data.AppDb>();
 builder.Services.AddSingleton<PlanStore>();
 builder.Services.AddSingleton<SolvedImportService>();
 builder.Services.AddSingleton<PmStore>();

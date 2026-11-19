@@ -13,3 +13,4 @@ publish/
 
 # pacotes gerados localmente
 *.zip
+backups/
