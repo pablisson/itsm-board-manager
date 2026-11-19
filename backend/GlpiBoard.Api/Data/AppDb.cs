@@ -166,8 +166,7 @@ public sealed partial class AppDb(BoardSettings settings, ILogger<AppDb> log) : 
         Server = settings.PlanDbHost, Port = (uint)settings.PlanDbPort, Database = settings.PlanDbName,
         UserID = settings.PlanDbUser, Password = settings.PlanDbPassword,
         ConnectionTimeout = 5, CharacterSet = "utf8mb4",
-        UseAffectedRows = true,          // UPDATE/ON DUPLICATE sem mudança devolve 0 (como no PostgreSQL)
-        DateTimeKind = MySqlDateTimeKind.Utc,
+        UseAffectedRows = true,          // UPDATE/ON DUPLICATE sem mudança devolve 0        DateTimeKind = MySqlDateTimeKind.Utc,
         AllowUserVariables = false,
     }.ConnectionString;
 

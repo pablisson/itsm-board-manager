@@ -1,10 +1,8 @@
-# Board ITSM + banco do sistema (MySQL) + PostgreSQL antigo (mantido como origem/rollback da migração).
+# Board ITSM + banco do sistema (MySQL).
 #   Subir/atualizar:  docker compose up -d --build
 #   Parar:            docker compose down          (os dados são mantidos nos volumes)
 #   ATENÇÃO: nunca use "docker compose down -v" — o -v apaga os volumes com os dados.
 #   Backup (MySQL):   docker compose exec mysql sh -c 'mysqldump -u"$$MYSQL_USER" -p"$$MYSQL_PASSWORD" --single-transaction --no-tablespaces --hex-blob "$$MYSQL_DATABASE"' > backup.sql
-#   Migração/conferência PostgreSQL → MySQL:
-#                     docker compose run --rm --no-deps board migrate-from-postgres --verify
 name: itsm-board
 
 services:
@@ -34,25 +32,6 @@ services:
       retries: 30
       start_period: 30s
 
-  # PostgreSQL antigo: não é mais usado pela aplicação; mantido para conferência e rollback
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${PLAN_DB_NAME:-board}
-      POSTGRES_USER: ${PLAN_DB_USER:-board}
-      POSTGRES_PASSWORD: ${PLAN_DB_PASSWORD:?defina PLAN_DB_PASSWORD no .env}
-      TZ: America/Sao_Paulo
-    volumes:
-      - plan-data:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:${PLAN_DB_PORT:-5433}:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
   board:
     build: .
     restart: unless-stopped
@@ -60,8 +39,6 @@ services:
     environment:
       MYSQL_DB_HOST: mysql
       MYSQL_DB_PORT: "3306"
-      PLAN_DB_HOST: db          # só para o comando migrate-from-postgres
-      PLAN_DB_PORT: "5432"
     ports:
       - "5080:8080"
     depends_on:
@@ -71,5 +48,3 @@ services:
 volumes:
   mysql-data:
     name: itsm-board-mysql-data
-  plan-data:
-    name: itsm-board-plan-data

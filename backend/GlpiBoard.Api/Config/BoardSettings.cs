@@ -31,13 +31,6 @@ public sealed class BoardSettings
     public string? PlanDbPassword { get; init; }          // MYSQL_DB_PASSWORD
     public bool PlanDbConfigured => !string.IsNullOrWhiteSpace(PlanDbHost) && !string.IsNullOrEmpty(PlanDbPassword);
 
-    // --- PostgreSQL antigo: só como origem da migração (comando migrate-from-postgres) ---
-    public string? PgSourceHost { get; init; }            // PLAN_DB_HOST
-    public int PgSourcePort { get; init; } = 5432;        // PLAN_DB_PORT
-    public string PgSourceName { get; init; } = "board";  // PLAN_DB_NAME
-    public string PgSourceUser { get; init; } = "board";  // PLAN_DB_USER
-    public string? PgSourcePassword { get; init; }        // PLAN_DB_PASSWORD
-
     public bool UsesUserToken => !string.IsNullOrWhiteSpace(UserToken);
     public bool UsesCredentials => !UsesUserToken && !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
     public bool AuthConfigured => !string.IsNullOrWhiteSpace(AuthUser) && !string.IsNullOrWhiteSpace(AuthPassword);
@@ -91,11 +84,6 @@ public sealed class BoardSettings
             PlanDbName = S("MYSQL_DB_NAME") ?? "board",
             PlanDbUser = S("MYSQL_DB_USER") ?? "board",
             PlanDbPassword = c["MYSQL_DB_PASSWORD"],
-            PgSourceHost = S("PLAN_DB_HOST"),
-            PgSourcePort = I("PLAN_DB_PORT", 5432),
-            PgSourceName = S("PLAN_DB_NAME") ?? "board",
-            PgSourceUser = S("PLAN_DB_USER") ?? "board",
-            PgSourcePassword = c["PLAN_DB_PASSWORD"],
         };
     }
 

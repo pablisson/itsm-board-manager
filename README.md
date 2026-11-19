@@ -115,10 +115,7 @@ docker compose exec -T mysql sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$
 ```
 Para rodar o app fora do Docker (desenvolvimento), suba só o banco com `docker compose up -d mysql`. O app usa `MYSQL_DB_HOST=localhost` e `MYSQL_DB_PORT=3316`.
 
-**PostgreSQL antigo (migrado em 19/11/2026).** O serviço `db` (volume `itsm-board-plan-data`) continua no ar só para conferência e rollback; a aplicação não grava mais nele.
-- Conferir PostgreSQL × MySQL linha a linha: `docker compose run --rm --no-deps board migrate-from-postgres --verify`
-- A cópia (`migrate-from-postgres` sem `--verify`) substitui o conteúdo do MySQL e é **recusada** depois que a aplicação passou a usar o MySQL (só com `--force`).
-- Rollback para a versão anterior (PostgreSQL): `docker tag itsm-board-board:pg-rollback itsm-board-board:latest` e recriar o container com o compose antigo — os dados gravados no MySQL depois da troca não voltam sozinhos.
+> Histórico: até 19/11/2026 o banco era PostgreSQL. Os dados foram migrados para o MySQL e o PostgreSQL foi retirado; o último backup dele está em `backups/pg-final-*` (o volume antigo `itsm-board-plan-data` foi mantido, sem uso).
 
 **Docker sem compose** (com um MySQL externo via `MYSQL_DB_*`):
 ```bash

@@ -7,9 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MySqlConnector" Version="2.6.2" />
-    <!-- Npgsql: só para o comando migrate-from-postgres (origem antiga) -->
-    <PackageReference Include="Npgsql" Version="8.0.6" />
-  </ItemGroup>
+    <PackageReference Include="MySqlConnector" Version="2.6.2" />  </ItemGroup>
 
 </Project>
