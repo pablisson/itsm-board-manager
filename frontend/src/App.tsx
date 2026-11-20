@@ -7,6 +7,7 @@ import MonthlyReportView from './views/MonthlyReportView'
 import TimelineView from './views/TimelineView'
 import PlanView from './views/PlanView'
 import SlaReportsView from './views/SlaReportsView'
+import PerformanceView from './views/PerformanceView'
 import ReportsMenu from './components/ReportsMenu'
 import SystemMenu from './components/SystemMenu'
 import MultiFilter,{ type FilterItem, type FilterKey } from './components/MultiFilter'
@@ -58,10 +59,10 @@ function buildStats<K extends FilterKey>(snap: BoardSnapshot, now: Date, keysOf:
 }
 
 type Thresholds = { warn: number; crit: number }
-type Tab = 'board' | 'entidades' | 'timeline' | 'plano' | 'sla' | 'relatorio'
+type Tab = 'board' | 'entidades' | 'timeline' | 'plano' | 'sla' | 'relatorio' | 'desempenho'
 // menu: true = não aparece nas abas, só no botão "Relatórios" à direita
 const TABS: { id: Tab; label: string; menu?: boolean; hint?: string }[] = [
-  { id: 'board', label: 'Board' }, { id: 'entidades', label: 'Entidades' }, { id: 'timeline', label: 'Linha do tempo' }, { id: 'plano', label: 'Planejamento' }, { id: 'relatorio', label: 'Relatório mensal' },
+  { id: 'board', label: 'Board' }, { id: 'entidades', label: 'Entidades' }, { id: 'timeline', label: 'Linha do tempo' }, { id: 'plano', label: 'Planejamento' }, { id: 'relatorio', label: 'Relatório mensal' }, { id: 'desempenho', label: 'Desempenho' },
   { id: 'sla', label: 'Relatórios de SLA', menu: true, hint: 'Atendimento/solução fora do prazo e tempo em atendimento, por técnico' },
 ]
 const readTab = (): Tab => { const h = location.hash.replace('#', ''); return TABS.some(t => t.id === h) ? h as Tab : 'board' }
@@ -180,14 +181,14 @@ export default function App() {
         <div className="actions">
           {tab !== 'timeline' && <input type="search" placeholder={isBoardData ? 'Filtrar: #id, título, técnico, grupo, entidade…' : 'Filtrar entidade…'} value={filter} onChange={e => setFilter(e.target.value)} />}
           {isBoardData && tab !== 'timeline' && snap && <MultiFilter items={entityStats} selected={entitySel} onChange={setEntitySel} singular="entidade" plural="entidades" icon="🏢" feminine />}
-          {(tab === 'board' || tab === 'plano' || tab === 'sla') && snap && <MultiFilter items={techStats} selected={techSel} onChange={setTechSel} singular="técnico" plural="técnicos" icon="👤" />}
+          {(tab === 'board' || tab === 'plano' || tab === 'sla' || tab === 'desempenho') && snap && <MultiFilter items={techStats} selected={techSel} onChange={setTechSel} singular="técnico" plural="técnicos" icon="👤" />}
           {tab === 'board' && snap && (
             <div className="seg sla-seg" role="group" aria-label="Filtro de SLA">
               <span className="seg-label">SLA</span>
               {SLA_FILTERS.map(f => <button key={f.id} type="button" title={f.title} className={slaFilter === f.id ? 'on' : ''} aria-pressed={slaFilter === f.id} onClick={() => setSlaFilter(f.id)}>{f.label}</button>)}
             </div>
           )}
-          {isBoardData && tab !== 'sla' && (
+          {isBoardData && tab !== 'sla' && tab !== 'desempenho' && (
             <button className="primary" onClick={() => load(true)} disabled={loading}>
               {loading ? 'Sincronizando…' : '⟳ Ressincronizar'}
             </button>
@@ -203,6 +204,7 @@ export default function App() {
       </div>
 
       {tab === 'relatorio' && <MonthlyReportView filter={filter} />}
+      {tab === 'desempenho' && <PerformanceView filter={filter} entitySel={entitySel} techSel={techSel} />}
       {tab === 'sla' && <SlaReportsView filter={filter} entitySel={entitySel} techSel={techSel} />}
 
       {isBoardData && requestError && <div className="banner error">Falha ao consultar o board: {requestError}</div>}
