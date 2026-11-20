@@ -107,6 +107,17 @@ app.MapGet("/api/reports/sla", async (SlaReportService r, string? from, string? 
     return Results.Ok(await r.GetAsync(f.Value, t.Value, refresh == true, ct));
 });
 
+// Desempenho: tickets solucionados/fechados nos dias from..to (AAAA-MM-DD)
+app.MapGet("/api/reports/performance", async (SlaReportService r, string? from, string? to, bool? refresh, CancellationToken ct) =>
+{
+    if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });
+    static DateOnly? Day(string? s) => DateOnly.TryParseExact(s, "yyyy-MM-dd", out var d) && d.Year is >= 2000 and <= 2100 ? d : null;
+    var f = Day(from); var t = Day(to);
+    if (f is null || t is null || t < f || t.Value.DayNumber - f.Value.DayNumber >= SlaReportService.MaxSolvedDays)
+        return Results.BadRequest(new { errors = new[] { $"Período inválido (use from/to = AAAA-MM-DD, até {SlaReportService.MaxSolvedDays} dias)." } });
+    return Results.Ok(await r.GetSolvedAsync(f.Value, t.Value, refresh == true, ct));
+});
+
 app.MapGet("/api/timeline",async (TimelineService tl, int tech, CancellationToken ct) =>
 {
     if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });

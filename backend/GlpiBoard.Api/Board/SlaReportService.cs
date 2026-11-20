@@ -20,6 +20,7 @@ public sealed record SlaReportTicket
     public DateTimeOffset? OpenedAtUtc { get; init; }
     public DateTimeOffset? TakenAtUtc { get; init; }
     public DateTimeOffset? SolvedAtUtc { get; init; }
+    public DateTimeOffset? ClosedAtUtc { get; init; }
     public string? TtoName { get; init; }
     public string? TtrName { get; init; }
     public DateTimeOffset? TtoDueUtc { get; init; }
@@ -57,19 +58,31 @@ public sealed record SlaReportResponse(SlaReport? Report, string? Error, int? Th
 public sealed class SlaReportService(GlpiClient glpi, BoardService board, BoardSettings settings, ILogger<SlaReportService> log)
 {
     public const int MaxMonths = 12;
-    private const string F_ID = "2", F_NAME = "1", F_STATUS = "12", F_DATE = "15", F_SOLVEDATE = "17", F_ENTITY = "80", F_TECH = "5",
+    private const string F_ID = "2", F_NAME = "1", F_STATUS = "12", F_DATE = "15", F_SOLVEDATE = "17", F_CLOSEDATE = "16", F_ENTITY = "80", F_TECH = "5",
         F_TTO_DUE = "155", F_TTR_DUE = "18", F_TTO_SLA = "37", F_TTR_SLA = "30", F_TTR_LATE = "82", F_TTO_LATE = "159",
         F_TAKE = "150", F_SOLVE = "154", F_WAIT = "153", F_ACTION = "45";
-    private static readonly string[] Display = [F_ID, F_NAME, F_STATUS, F_DATE, F_SOLVEDATE, F_ENTITY, F_TECH,
+    private static readonly string[] Display = [F_ID, F_NAME, F_STATUS, F_DATE, F_SOLVEDATE, F_CLOSEDATE, F_ENTITY, F_TECH,
         F_TTO_DUE, F_TTR_DUE, F_TTO_SLA, F_TTR_SLA, F_TTR_LATE, F_TTO_LATE, F_TAKE, F_SOLVE, F_WAIT, F_ACTION];
 
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly Dictionary<string, SlaReport> _cache = new();
     private DateTimeOffset _lastAttempt = DateTimeOffset.MinValue;
 
-    public async Task<SlaReportResponse> GetAsync(DateOnly from, DateOnly to, bool force, CancellationToken ct)
+    /// <summary>Tickets ABERTOS nos meses from..to.</summary>
+    public Task<SlaReportResponse> GetAsync(DateOnly from, DateOnly to, bool force, CancellationToken ct) =>
+        CachedAsync($"open_{from:yyyy-MM}_{to:yyyy-MM}", force, () => BuildOpenedAsync(from, to, ct), ct);
+
+    public const int MaxSolvedDays = 366;
+
+    /// <summary>
+    /// Tickets SOLUCIONADOS/FECHADOS nos dias from..to (fuso do ITSM). Dia = data da solução; sem solução, a do fechamento.
+    /// Ticket reaberto (status diferente de Solucionado/Fechado) não entra.
+    /// </summary>
+    public Task<SlaReportResponse> GetSolvedAsync(DateOnly from, DateOnly to, bool force, CancellationToken ct) =>
+        CachedAsync($"solved_{from:yyyy-MM-dd}_{to:yyyy-MM-dd}", force, () => BuildSolvedAsync(from, to, ct), ct);
+
+    private async Task<SlaReportResponse> CachedAsync(string key, bool force, Func<Task<SlaReport>> build, CancellationToken ct)
     {
-        var key = $"{from:yyyy-MM}_{to:yyyy-MM}";
         await _lock.WaitAsync(ct);
         try
         {
@@ -83,7 +96,7 @@ public sealed class SlaReportService(GlpiClient glpi, BoardService board, BoardS
             _lastAttempt = now;
             try
             {
-                var rep = await BuildAsync(from, to, ct);
+                var rep = await build();
                 _cache[key] = rep;
                 return new(rep, null);
             }
@@ -96,26 +109,55 @@ public sealed class SlaReportService(GlpiClient glpi, BoardService board, BoardS
         finally { _lock.Release(); }
     }
 
-    private async Task<SlaReport> BuildAsync(DateOnly from, DateOnly to, CancellationToken ct)
+    /// <summary>Critério "campo entre [start, end)" (datas locais do ITSM) + colunas do relatório.</summary>
+    private static List<KeyValuePair<string, string>> Range(string field, DateTime start, DateTime end)
     {
-        var sw = Stopwatch.StartNew();
-        var warnings = new ConcurrentBag<string>();
-        var start = from.ToDateTime(TimeOnly.MinValue);
-        var end = to.AddMonths(1).ToDateTime(TimeOnly.MinValue);
-        var fmt = "yyyy-MM-dd HH:mm:ss";
+        const string fmt = "yyyy-MM-dd HH:mm:ss";
         var q = new List<KeyValuePair<string, string>>
         {
-            new("criteria[0][field]", F_DATE), new("criteria[0][searchtype]", "morethan"),
+            new("criteria[0][field]", field), new("criteria[0][searchtype]", "morethan"),
             new("criteria[0][value]", start.AddSeconds(-1).ToString(fmt, CultureInfo.InvariantCulture)),
             new("criteria[1][link]", "AND"),
-            new("criteria[1][field]", F_DATE), new("criteria[1][searchtype]", "lessthan"),
+            new("criteria[1][field]", field), new("criteria[1][searchtype]", "lessthan"),
             new("criteria[1][value]", end.ToString(fmt, CultureInfo.InvariantCulture)),
         };
         for (var i = 0; i < Display.Length; i++) q.Add(new($"forcedisplay[{i}]", Display[i]));
+        return q;
+    }
 
+    private async Task<SlaReport> BuildOpenedAsync(DateOnly from, DateOnly to, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
         await using var session = await glpi.OpenSessionAsync(ct);
-        var rows = await glpi.SearchAllAsync(session, "Ticket", q, ct);
+        var rows = await glpi.SearchAllAsync(session, "Ticket",
+            Range(F_DATE, from.ToDateTime(TimeOnly.MinValue), to.AddMonths(1).ToDateTime(TimeOnly.MinValue)), ct);
+        var rep = await BuildAsync(session, rows, _ => true, ct);
+        return rep with { DurationMs = sw.ElapsedMilliseconds, From = from.ToString("yyyy-MM"), To = to.ToString("yyyy-MM") };
+    }
 
+    private async Task<SlaReport> BuildSolvedAsync(DateOnly from, DateOnly to, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        var start = from.ToDateTime(TimeOnly.MinValue);
+        var end = to.AddDays(1).ToDateTime(TimeOnly.MinValue);
+        await using var session = await glpi.OpenSessionAsync(ct);
+        // duas buscas (solução / fechamento no período): fechado sem data de solução também entra
+        var rows = (await glpi.SearchAllAsync(session, "Ticket", Range(F_SOLVEDATE, start, end), ct))
+            .Concat(await glpi.SearchAllAsync(session, "Ticket", Range(F_CLOSEDATE, start, end), ct)).ToList();
+        var rep = await BuildAsync(session, rows, t =>
+        {
+            if (t.Status is not (5 or 6)) return false;    // reaberto depois
+            var endAt = t.SolvedAtUtc ?? t.ClosedAtUtc;
+            if (endAt is null) return false;
+            var day = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(endAt.Value, settings.GlpiTimeZone).DateTime);
+            return day >= from && day <= to;                // solucionado antes e só fechado no período: fica de fora
+        }, ct);
+        return rep with { DurationMs = sw.ElapsedMilliseconds, From = from.ToString("yyyy-MM-dd"), To = to.ToString("yyyy-MM-dd") };
+    }
+
+    private async Task<SlaReport> BuildAsync(GlpiClient.Session session, IEnumerable<JsonElement> rows, Func<SlaReportTicket, bool> keep, CancellationToken ct)
+    {
+        var warnings = new ConcurrentBag<string>();
         var parsed = new List<(JsonElement Row, int Id, List<int> Techs)>();
         var seen = new HashSet<int>();
         foreach (var r in rows)
@@ -151,6 +193,7 @@ public sealed class SlaReportService(GlpiClient glpi, BoardService board, BoardS
                 OpenedAtUtc = BoardService.ToUtc(Str(r, F_DATE), settings),
                 TakenAtUtc = taken.TryGetValue(p.Id, out var tk) ? BoardService.ToUtc(tk, settings) : null,
                 SolvedAtUtc = BoardService.ToUtc(Str(r, F_SOLVEDATE), settings),
+                ClosedAtUtc = BoardService.ToUtc(Str(r, F_CLOSEDATE), settings),
                 TtoName = BoardService.CleanDropdown(Str(r, F_TTO_SLA)),
                 TtrName = BoardService.CleanDropdown(Str(r, F_TTR_SLA)),
                 TtoDueUtc = BoardService.ToUtc(Str(r, F_TTO_DUE), settings),
@@ -162,13 +205,11 @@ public sealed class SlaReportService(GlpiClient glpi, BoardService board, BoardS
                 WaitingSec = Long(r, F_WAIT),
                 ActionTimeSec = Long(r, F_ACTION),
             };
-        }).OrderBy(t => t.OpenedAtUtc).ToList();
+        }).Where(keep).OrderBy(t => t.OpenedAtUtc).ToList();
 
         return new SlaReport
         {
             GeneratedAtUtc = DateTimeOffset.UtcNow,
-            DurationMs = sw.ElapsedMilliseconds,
-            From = from.ToString("yyyy-MM"), To = to.ToString("yyyy-MM"),
             Technicians = names.Select(kv => new PersonRef(kv.Key, kv.Value)).OrderBy(x => x.Name).ToList(),
             Tickets = tickets,
             Warnings = warnings.Distinct().OrderBy(w => w).ToList(),

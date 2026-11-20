@@ -48,7 +48,7 @@ export interface TimelineResponse {
 
 export interface SlaReportTicket {
   id: number; title: string; status: number; statusLabel: string; entity: string | null; url: string; techIds: number[]
-  openedAtUtc: string | null; takenAtUtc: string | null; solvedAtUtc: string | null
+  openedAtUtc: string | null; takenAtUtc: string | null; solvedAtUtc: string | null; closedAtUtc?: string | null
   ttoName: string | null; ttrName: string | null; ttoDueUtc: string | null; ttrDueUtc: string | null
   ttoLate: boolean; ttrLate: boolean
   takeDelaySec: number | null; solveDelaySec: number | null; waitingSec: number | null; actionTimeSec: number | null
