@@ -138,6 +138,37 @@ public sealed class GlpiClient(HttpClient http, BoardSettings settings, ILogger<
         return all;
     }
 
+    /// <summary>Igual a <see cref="SearchAllAsync"/>, mas busca as páginas restantes em paralelo (máx. <paramref name="parallelism"/>), mantendo a ordem.</summary>
+    public async Task<List<JsonElement>> SearchAllParallelAsync(Session s, string itemtype, IReadOnlyList<KeyValuePair<string, string>> query, CancellationToken ct, int pageSize = 500, int parallelism = 4)
+    {
+        var qs = string.Join("&", query.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+        async Task<(int Total, List<JsonElement> Rows)> Page(int start)
+        {
+            var json = await GetAsync(s, $"search/{itemtype}?{qs}&range={start}-{start + pageSize - 1}", ct);
+            if (json is null) return (0, new());
+            var root = json.Value;
+            var total = root.TryGetProperty("totalcount", out var tc) ? ReadInt(tc) ?? 0 : 0;
+            var rows = root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array
+                ? data.EnumerateArray().Select(e => e.Clone()).ToList() : new List<JsonElement>();
+            return (total, rows);
+        }
+
+        var first = await Page(0);
+        var all = new List<JsonElement>(Math.Max(first.Total, first.Rows.Count));
+        all.AddRange(first.Rows);
+        var starts = new List<int>();
+        for (var st = pageSize; st < first.Total; st += pageSize) starts.Add(st);
+        using var gate = new SemaphoreSlim(Math.Max(1, parallelism));
+        var pages = await Task.WhenAll(starts.Select(async st =>
+        {
+            await gate.WaitAsync(ct);
+            try { return (await Page(st)).Rows; }
+            finally { gate.Release(); }
+        }));
+        foreach (var p in pages) all.AddRange(p);
+        return all;
+    }
+
     private HttpRequestMessage Build(HttpMethod m, string pathAndQuery, string sessionToken)
     {
         var req = new HttpRequestMessage(m, $"{settings.GlpiUrl}/{pathAndQuery}");

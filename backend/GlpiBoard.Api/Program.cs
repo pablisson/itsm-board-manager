@@ -19,6 +19,7 @@ builder.Services.AddSingleton<BoardService>();
 builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<TimelineService>();
 builder.Services.AddSingleton<SlaReportService>();
+builder.Services.AddSingleton<TechReportService>();
 builder.Services.AddSingleton<GlpiBoard.Api.Data.AppDb>();
 builder.Services.AddSingleton<PlanStore>();
 builder.Services.AddSingleton<SolvedImportService>();
@@ -116,6 +117,17 @@ app.MapGet("/api/reports/performance", async (SlaReportService r, string? from, 
     if (f is null || t is null || t < f || t.Value.DayNumber - f.Value.DayNumber >= SlaReportService.MaxSolvedDays)
         return Results.BadRequest(new { errors = new[] { $"Período inválido (use from/to = AAAA-MM-DD, até {SlaReportService.MaxSolvedDays} dias)." } });
     return Results.Ok(await r.GetSolvedAsync(f.Value, t.Value, refresh == true, ct));
+});
+
+// Por técnico: tickets ABERTOS nos dias from..to (AAAA-MM-DD), com tema (nível 2 da categoria)
+app.MapGet("/api/reports/technicians", async (TechReportService r, string? from, string? to, bool? refresh, CancellationToken ct) =>
+{
+    if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });
+    static DateOnly? Day(string? s) => DateOnly.TryParseExact(s, "yyyy-MM-dd", out var d) && d.Year is >= 2000 and <= 2100 ? d : null;
+    var f = Day(from); var t = Day(to);
+    if (f is null || t is null || t < f || t.Value.DayNumber - f.Value.DayNumber >= TechReportService.MaxDays)
+        return Results.BadRequest(new { errors = new[] { $"Período inválido (use from/to = AAAA-MM-DD, até {TechReportService.MaxDays} dias)." } });
+    return Results.Ok(await r.GetAsync(f.Value, t.Value, refresh == true, ct));
 });
 
 app.MapGet("/api/timeline",async (TimelineService tl, int tech, CancellationToken ct) =>

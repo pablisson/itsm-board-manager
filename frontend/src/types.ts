@@ -58,3 +58,16 @@ export interface SlaReport {
   technicians: PersonRef[]; tickets: SlaReportTicket[]; warnings: string[]
 }
 export interface SlaReportResponse { report: SlaReport | null; error: string | null; throttledSeconds?: number | null }
+
+/** categoria = nível 2 real · inferido = nível 2 deduzido do título · nivel1 = só nível 1 · sem = sem categoria */
+export type ThemeSource = 'categoria' | 'inferido' | 'nivel1' | 'sem'
+export interface TechReportTicket {
+  id: number; title: string; status: number; statusLabel: string; entity: string | null; url: string
+  techIds: number[]; requesterIds: number[]; openedAtUtc: string | null
+  category: string | null; theme: string | null; themeSource: ThemeSource; confidence: number | null
+}
+export interface TechReport {
+  generatedAtUtc: string; durationMs: number; from: string; to: string
+  people: PersonRef[]; tickets: TechReportTicket[]; trainingTickets: number; warnings: string[]
+}
+export interface TechReportResponse { report: TechReport | null; error: string | null; throttledSeconds?: number | null }

@@ -1,15 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { Card, HBars, TipBox } from './vizKit'
+import { addDays, daysBetween, fmtDay, pad, parseDay, TipCtx, tipProps, ymd, type Tip } from './vizCore'
 import type { SlaReportResponse, SlaReportTicket } from '../types'
 import { apiUrl, formatDate } from '../format'
 import { NO_ENTITY, shortEntity } from '../entity'
 
 /* ---------- período ---------- */
-const pad = (n: number) => String(n).padStart(2, '0')
-const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-const parseDay = (iso: string) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y!, m! - 1, d!) }
-const addDays = (iso: string, n: number) => { const d = parseDay(iso); d.setDate(d.getDate() + n); return ymd(d) }
-const daysBetween = (a: string, b: string) => Math.round((parseDay(b).getTime() - parseDay(a).getTime()) / 864e5) + 1
-const fmtDay = (iso: string) => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}` }
 const MAX_DAYS = 366
 
 type Preset = 'hoje' | 'ontem' | '7d' | 'mes' | 'mesant' | '30d' | '90d' | 'custom'
@@ -133,15 +129,6 @@ function parallelByEntity(items: Item[]): EntityPar[] {
 }
 
 /* ---------- tooltip ---------- */
-type Tip = { x: number; y: number; body: ReactNode } | null
-const TipCtx = createContext<(t: Tip) => void>(() => {})
-function tipProps(set: (t: Tip) => void, body: () => ReactNode) {
-  return {
-    onMouseMove: (e: React.MouseEvent) => set({ x: e.clientX, y: e.clientY, body: body() }),
-    onMouseLeave: () => set(null),
-  }
-}
-
 interface Props { filter: string; entitySel: Set<string> | null; techSel: Set<number> | null }
 
 export default function PerformanceView({ filter, entitySel, techSel }: Props) {
@@ -422,46 +409,12 @@ export default function PerformanceView({ filter, entitySel, techSel }: Props) {
           </>
         )}
       </section>
-      {tip && (
-        <div className="pf-tip" role="tooltip" style={{ left: Math.min(tip.x + 14, window.innerWidth - 300), top: tip.y + 14 }}>{tip.body}</div>
-      )}
+      <TipBox tip={tip} />
     </TipCtx.Provider>
   )
 }
 
 /* ---------- componentes dos gráficos ---------- */
-
-function Card({ title, hint, tone, children }: { title: string; hint?: string; tone?: 'tto' | 'ttr'; children: ReactNode }) {
-  return (
-    <section className={`pf-card${tone ? ' ' + tone : ''}`}>
-      <header><h4>{tone && <i className={`pf-key ${tone}`} aria-hidden />}{title}</h4>{hint && <p>{hint}</p>}</header>
-      {children}
-    </section>
-  )
-}
-
-interface BarRow { id: string | number; label: string; value: number; tip: ReactNode }
-function HBars({ rows, tone, fmt, onPick, picked }: { rows: BarRow[]; tone: 'tto' | 'ttr' | 'qty' | 'par'; fmt: (v: number) => string; onPick?: (id: string | number) => void; picked?: string | null }) {
-  const setTip = useContext(TipCtx)
-  if (!rows.length) return <p className="empty">Sem dados.</p>
-  const max = Math.max(...rows.map(r => r.value), 0)
-  return (
-    <div className="pf-hbars">
-      {rows.map(r => {
-        const inner = <>
-          <span className="pf-hbar-label" title={r.label}>{r.label}</span>
-          <span className="pf-hbar-track">
-            <span className={`pf-fill ${tone}`} style={{ '--p': max ? Math.max(0.01, r.value / max) : 0 } as React.CSSProperties} />
-            <span className="pf-hbar-val">{fmt(r.value)}</span>
-          </span>
-        </>
-        return onPick
-          ? <button key={r.id} type="button" className={`pf-hbar pick${picked === r.id ? ' on' : ''}`} aria-pressed={picked === r.id} onClick={() => onPick(r.id)} {...tipProps(setTip, () => r.tip)}>{inner}</button>
-          : <div key={r.id} className="pf-hbar" {...tipProps(setTip, () => r.tip)}>{inner}</div>
-      })}
-    </div>
-  )
-}
 
 function Columns({ points }: { points: { key: string; label: string; long: string; value: number }[] }) {
   const setTip = useContext(TipCtx)
