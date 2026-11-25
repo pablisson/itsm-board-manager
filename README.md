@@ -1,192 +1,193 @@
 # Board Gerencial GLPI
 
-Kanban de acompanhamento gerencial lido **diretamente da API REST do GLPI** (somente leitura).
-Backend **ASP.NET Core 8 (C#)** + frontend **React (Vite/TypeScript)**, publicados como um único serviço.
+**Painel de gestão para equipes de suporte que usam o GLPI.** Ele transforma os chamados do ITSM em um quadro visual, em relatórios de desempenho e em planejamento da equipe, e ainda inclui um módulo de gestão de projetos integrado ao GLPI.
 
-```
-Navegador ──HTTPS + login──► ASP.NET Core (serve o React + /api) ──HTTPS + tokens──► GLPI /apirest.php
-```
-Os tokens do GLPI ficam **somente no servidor**; o navegador nunca os recebe.
+Feito para quem **coordena** um time de atendimento: gerente de projetos, coordenador de suporte ou líder técnico. Quem gerencia precisa enxergar a operação inteira sem montar planilha e sem abrir chamado por chamado.
 
-## 1. Colunas e regras
+![.NET 8](https://img.shields.io/badge/.NET-8-512BD4) ![React 19](https://img.shields.io/badge/React-19-61DAFB) ![MySQL 8.4](https://img.shields.io/badge/MySQL-8.4-4479A1) ![GLPI 9.5 / 10](https://img.shields.io/badge/GLPI-9.5%20%2F%2010-orange) ![Docker](https://img.shields.io/badge/Docker-compose-2496ED)
 
-| Coluna | Regra aplicada (GLPI 9.5 / 10.x) |
+---
+
+## Sumário
+
+- [Por que este projeto existe](#por-que-este-projeto-existe)
+- [Ganhos para o gerente de projetos](#ganhos-para-o-gerente-de-projetos)
+- [Funcionalidades](#funcionalidades)
+- [Como usar](#como-usar)
+- [Funcionalidades futuras](#funcionalidades-futuras)
+- [Arquitetura e segurança](#arquitetura-e-segurança)
+- [Documentação técnica](#documentação-técnica)
+
+---
+
+## Por que este projeto existe
+
+O GLPI é ótimo para **registrar** chamados, mas responder a perguntas de gestão exige exportar dados e montar planilhas. Perguntas como estas:
+
+- *O que está parado agora, e com quem?*
+- *Quem está sobrecarregado e quem tem espaço para mais?*
+- *Quanto tempo levamos para começar a atender? E para resolver?*
+- *Que tipo de problema cada técnico domina? Onde temos uma pessoa só que sabe resolver?*
+- *Quais clientes mais abrem chamados, e por quê?*
+
+O Board Gerencial lê os dados **diretamente da API do GLPI** e responde a essas perguntas em telas prontas, atualizadas e com filtros. O GLPI continua sendo a fonte oficial: o board não altera nenhum chamado.
+
+---
+
+## Ganhos para o gerente de projetos
+
+| Ganho | Como o board entrega |
 |---|---|
-| 1 · Sem atribuição | Status 1–3 (Novo / Em atendimento) **sem nenhum técnico (usuário) atribuído**. Chamado só com grupo atribuído entra aqui com o alerta "Atribuído só a grupo". |
-| 2 · Em andamento | Status 1–3 **com técnico atribuído**, agrupado por técnico. Mostra o tempo aberto e o item mais antigo de cada pessoa. Chamado com 2 técnicos aparece nas duas raias ("Divide com"), mas o KPI conta o chamado uma vez só. |
-| 3 · Completos | Status 5 (Solucionado) ou 6 (Fechado) com data de solução nos últimos `BOARD_DONE_DAYS` dias, menos os cancelados. Mostra o tempo de resolução. |
-| 4 · Bloqueados | Status 4 (**Pendente**). |
-| 5 · Cancelados | Status 5/6 cuja última solução (não recusada) tem **Tipo de solução** em `BOARD_CANCELLED_SOLUTIONTYPE_IDS`. |
+| **Visão da operação em segundos** | Um quadro Kanban com todos os chamados por situação e por técnico, com alertas visuais de tempo aberto e de SLA. |
+| **Fim das planilhas manuais** | Relatórios mensais, de SLA, de desempenho e por técnico, gerados do GLPI com um clique e exportáveis em CSV. |
+| **Distribuição justa da carga** | Mostra quantos chamados cada técnico tem em andamento, qual é o mais antigo e quanto cada um resolveu no período. |
+| **Decisão baseada em tempos reais** | Tempo médio e mediano até iniciar o atendimento e até a solução, em horário útil (o mesmo do SLA) ou corrido. |
+| **Mapa de conhecimento do time** | Matriz técnico × tema mostra quem já atendeu cada assunto. Revela pontos únicos de conhecimento e orienta treinamentos e substituições em férias. |
+| **Atendimento proativo aos clientes** | Problemas mais recorrentes por cliente e requerentes que mais abrem chamados, para atacar a causa e não só o sintoma. |
+| **Planejamento da semana** | Agenda técnico × dia com os chamados planejados, para fazer a reunião diária com dados. |
+| **Projetos sob controle** | Cronograma com Gantt, dependências, marcos e planejado × realizado, sincronizado com o módulo de Projetos do GLPI. |
+| **Prestação de contas** | Números consistentes para reuniões com a diretoria e com clientes: volume, prazos, atendimento em paralelo e evolução mês a mês. |
 
-**Técnico e observador:** o vínculo vem de `Ticket/{id}/Ticket_User`, e só entra quem tem `type = 2` (Técnico atribuído).
-`type = 1` (Requerente) e `type = 3` (Observador) **são descartados**.
+---
 
-**Tempo aberto:** tempo corrido desde a **data de abertura** (`date`), 24×7. Ele é recalculado no navegador a cada minuto.
-As cores seguem `BOARD_AGE_WARN_HOURS` (amarelo) e `BOARD_AGE_CRITICAL_HOURS` (vermelho).
+## Funcionalidades
 
-## 2. Ambiguidades: decida e ajuste
+### 1. Board de chamados (Kanban)
+- **Colunas:** Sem atribuição · Em andamento (uma raia por técnico) · Bloqueados (Pendente) · Completos · Cancelados.
+- **Tempo aberto** em cada card, com cores de alerta configuráveis (amarelo e vermelho).
+- **Situação de SLA:** prazos de primeiro atendimento e de solução, com destaque para os atrasados e os que estão perto de vencer.
+- **Sinais de atenção:** chamado atribuído só a grupo, status incoerente e chamado dividido entre técnicos.
+- **Filtros:** texto livre (#id, título, técnico, grupo, entidade), entidades e técnicos, com a seleção memorizada.
+- **Proteção do GLPI:** a leitura fica em cache e a ressincronização manual tem intervalo mínimo. Se o GLPI cair, a tela mostra a última leitura válida.
 
-1. **Cancelado não existe no GLPI.** Não há status nativo. A regra adotada é o *Tipo de solução*. Se a sua equipe cancela de outro jeito (categoria, etiqueta, ticket na lixeira, texto da solução), a coluna precisa de outra regra. **Sem configuração, a coluna mostra "não configurado" e nada é inferido.**
-2. **Pendente ≠ bloqueado.** No GLPI, "Pendente" também significa "aguardando o usuário" ou "aguardando fornecedor". O board trata todo Pendente como bloqueado. Se vocês separam os motivos (por exemplo, por categoria ou etiqueta), dá para refinar.
-3. **Atribuição só a grupo.** Fica em "Sem atribuição", porque não há uma *pessoa* responsável. Isso aparece sinalizado no card.
-4. **Status Novo com técnico.** Acontece por importação ou regra de negócio. O chamado vai para "Em andamento" com o alerta correspondente.
-5. **Tempo aberto contado desde a abertura**, e não desde a atribuição ao técnico. O GLPI não expõe a data da atribuição em um campo simples (ela está só no histórico/log).
-6. **SLA/horário útil não é considerado.** Para isso seria preciso ler `time_to_resolve` e o calendário da entidade.
-7. **Entidades.** O board enxerga o que o perfil do usuário de serviço enxerga, na entidade padrão dele. Dê ao usuário a entidade raiz **com recursão** se quiser ver tudo.
-8. **"Pendente desde quando".** Não é exibido (ele está em `begin_waiting_date`, que ainda não é lido).
-9. **Fuso horário.** O GLPI grava as datas sem fuso, e `GLPI_TIMEZONE` precisa refletir o fuso do servidor GLPI.
+### 2. Entidades
+- Visão dos chamados por cliente ou entidade, para saber rapidamente onde está a demanda.
 
-## 3. Variáveis de ambiente
+### 3. Linha do tempo por técnico
+- Histórico de cada chamado do técnico: mudanças de status, acompanhamentos, tarefas, soluções e atribuições, em ordem cronológica.
 
-| Variável | Obrigatória | Segredo | Descrição |
-|---|---|---|---|
-| `GLPI_URL` | sim | não | `https://…/apirest.php` (HTTPS obrigatório) |
-| `GLPI_APP_TOKEN` | se o cliente da API exigir | **sim** | Token do cliente da API |
-| `GLPI_USER_TOKEN` | um dos modos | **sim** | Token de API do usuário de serviço (**recomendado**, tem prioridade) |
-| `GLPI_USERNAME` / `GLPI_PASSWORD` | um dos modos | **sim** (senha) | Alternativa ao user token |
-| `GLPI_TIMEZONE` | não | não | Padrão `America/Sao_Paulo` |
-| `BOARD_CANCELLED_SOLUTIONTYPE_IDS` | não | não | Ex.: `3` ou `3,7` |
-| `BOARD_DONE_DAYS` | não | não | Padrão 30 |
-| `BOARD_AUTH_USER` / `BOARD_AUTH_PASSWORD` | **sim** | **sim** (senha) | Login do board no navegador |
-| `BOARD_AUTH_DISABLED` | não | não | `true` só se o board estiver atrás de VPN/SSO |
+### 4. Planejamento (técnico × dia)
+- Agenda mensal com os chamados planejados para cada técnico em cada dia.
+- Arrastar para mover, copiar o planejamento de um dia e preencher a partir do backlog.
+- **Importar os chamados solucionados** do GLPI no dia da solução, para comparar o planejado com o realizado.
 
-Demais variáveis: veja `.env.example`.
-
-### Preenchimento guiado (uma a uma)
-```bash
-./scripts/setup-env.sh
-```
-```powershell
-.\scripts\setup-env.ps1
-```
-Os segredos são digitados sem eco. O `.env` é gravado com permissão restrita, e o script oferece um teste de autenticação no GLPI.
-
-### Boas práticas de segurança
-- Crie um **usuário de serviço dedicado** (ex.: `svc_board`) com um **perfil somente leitura**: Chamados → *Ver todos*; Usuários, Grupos e Tipos de solução → *Ler*. **Nunca** use uma conta pessoal ou de administrador.
-- Prefira **`GLPI_USER_TOKEN`**: ele é revogável e não expõe senha. Deixe `GLPI_USERNAME`/`GLPI_PASSWORD` vazios.
-- No cliente da API do GLPI, restrinja a **faixa de IP** ao servidor do board.
-- **Nunca** versione o `.env`, que já está no `.gitignore`. Em produção, cadastre as variáveis no painel da hospedagem (App Settings, Secrets etc.), e não em arquivo.
-- Faça rotação dos tokens periodicamente e sempre que alguém com acesso sair da equipe.
-- O endpoint `/api/config-status` mostra apenas **se** cada variável está definida, nunca o valor.
-
-## 4. Rodar localmente
-```bash
-cd frontend
-```
-```bash
-npm ci
-```
-```bash
-npm run build
-```
-O build sai em `backend/GlpiBoard.Api/wwwroot`.
-```bash
-cd ../backend/GlpiBoard.Api
-```
-```bash
-dotnet run --urls http://localhost:5080
-```
-O `dotnet run` lê o `.env` da raiz do projeto. Depois, abra http://localhost:5080.
-Para desenvolver o front com hot reload, rode `npm run dev` em `frontend/` com o backend rodando em `:5080`.
-
-## 5. Publicar (acesso de qualquer computador)
-
-> ⚠️ **Pré-requisito crítico:** o servidor do board precisa **alcançar o GLPI**. Se o GLPI está só na rede interna, um host na nuvem não vai conseguir chegar até ele.
-
-| Cenário | Recomendação |
+### 5. Relatórios
+| Relatório | O que responde |
 |---|---|
-| GLPI só na rede interna | Publicar no **IIS de um servidor interno** e expor via proxy reverso com HTTPS ou via VPN |
-| GLPI acessível pela internet | **Azure App Service**, Render, Railway, Fly.io ou uma VM com Docker |
+| **Relatório mensal** | Chamados abertos por entidade e por mês. Mostra a tendência de demanda de cada cliente. |
+| **Relatórios de SLA** | Por técnico: prazos de SLA, chamados que estouraram o prazo, tempo até ser assumido, tempo de solução e tempo pendente. |
+| **Desempenho** | Para qualquer período: chamados resolvidos por técnico e por dia, tempos médios e medianos (horário útil ou corrido), os 10 mais lentos para iniciar e para resolver, os 10 mais rápidos e o **atendimento em paralelo** na mesma empresa (pico de simultaneidade e técnicos envolvidos). |
+| **Por técnico** | Temas e categorias que cada técnico já atendeu (matriz de cobertura), empresas atendidas, problemas mais recorrentes em cada empresa, requerentes atendidos e quem mais abre chamados. |
 
-**Docker Compose** (recomendado — app + banco do Planejamento):
+Todos os relatórios têm escolha de período, gráficos com detalhes ao passar o mouse e exportação em **CSV**.
+
+> **Classificação inteligente de temas:** muitos chamados ficam registrados só no 1º nível da categoria ou sem categoria nenhuma. Nesses casos, o relatório Por técnico **deduz o 2º nível pelo título**, aprendendo com os chamados já bem classificados. A dedução só é aplicada com alta confiança e com uma palavra-chave forte; nos testes, acertou de 93% a 99%. Os chamados deduzidos aparecem marcados, e um botão mostra só a categoria original do GLPI.
+
+### 6. Gestão de Projetos
+- Projetos por entidade, com tarefas e subtarefas em até 3 níveis, criadas e reorganizadas pelo teclado (`Enter`, `Tab`, `Shift+Tab`).
+- **Quatro datas por tarefa:** início e fim planejados e executados.
+- **Dependências:** término→início, início→início, término→término e início→término, com folga. Mostra conflitos e ajusta datas.
+- **Marcos** com situação calculada: no prazo, em risco, atrasado ou atingido.
+- **Planejado × realizado** por tarefa e por projeto, ponderado pela duração das tarefas.
+- Checklist e anexos em cada tarefa.
+- **Gráfico de Gantt** com as barras de planejado e executado, dependências e linha de hoje, e **exportação em PDF** (A3 paisagem).
+- **Integração com o GLPI:** cria projeto, tarefas, equipe e dependências no módulo de Projetos e sincroniza nos dois sentidos.
+
+---
+
+## Como usar
+
+### Pré-requisitos
+- GLPI 9.5 ou 10.x com a **API REST habilitada**: *Configurar → Geral → API*.
+- Um **usuário de serviço** no GLPI com perfil **somente leitura**: chamados (ver todos), usuários, grupos, categorias e tipos de solução. Para a integração de projetos, o perfil também precisa de escrita no módulo Projetos.
+- Docker e Docker Compose. Também é possível rodar sem Docker, com .NET 8, Node 22 e MySQL 8.
+
+### 1. Configure
+```bash
+git clone <url-deste-repositório>
+cd itsm-board-manager
+cp .env.example .env
+```
+Preencha o `.env`: o endereço da API do GLPI, os tokens, o login do board e a senha do banco. Também dá para usar o assistente, que pede um valor por vez e testa a conexão:
+```bash
+./scripts/setup-env.sh        # Linux / macOS
+.\scripts\setup-env.ps1       # Windows
+```
+
+### 2. Suba
 ```bash
 docker compose up -d --build
 ```
-O board sobe em `http://localhost:5080`. O banco do sistema é o **MySQL 8.4** (serviço `mysql`, volume `itsm-board-mysql-data`), com o Planejamento e a Gestão de Projetos.
-Os dados sobrevivem a restart, `docker compose down`, rebuild e reinício da máquina (os serviços usam `restart: unless-stopped`).
-Defina `MYSQL_DB_PASSWORD` no `.env` antes da primeira subida. As tabelas são criadas automaticamente; as datas são gravadas em UTC.
+Abra **http://localhost:5080** e entre com o usuário e a senha definidos em `BOARD_AUTH_USER` e `BOARD_AUTH_PASSWORD`.
 
-> ⚠️ **Nunca** use `docker compose down -v`: o `-v` apaga os volumes com os dados.
+### 3. Use no dia a dia
+| Momento | Onde ir | O que fazer |
+|---|---|---|
+| **Início do dia** | Board | Ver o que está sem técnico, o que está bloqueado e os SLAs perto de vencer. Distribuir os chamados. |
+| **Reunião diária** | Planejamento | Revisar o que cada técnico planejou para hoje e mover o que ficou para trás. |
+| **Acompanhamento de um técnico** | Linha do tempo | Ver o histórico recente dos chamados dele. |
+| **Fechamento da semana ou do mês** | Desempenho | Volume resolvido, tempos médios, chamados mais lentos e atendimento em paralelo. |
+| **Gestão do time** | Por técnico | Mapa de conhecimento, clientes atendidos e requerentes. Define treinamentos e redistribui temas. |
+| **Reunião com cliente ou diretoria** | Relatório mensal e SLA | Tendência de demanda e cumprimento de prazos, exportados em CSV. |
+| **Projetos** | Gestão de Projetos (clique no título da página) | Atualizar tarefas, conferir o Gantt e sincronizar com o GLPI. |
 
-Backup e restauração:
-```bash
-docker compose exec -T mysql sh -c 'mysqldump -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" --single-transaction --no-tablespaces --hex-blob "$MYSQL_DATABASE"' > backup.sql
-docker compose exec -T mysql sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' < backup.sql
+> **Dica:** os filtros do topo (texto, entidades e técnicos) valem para todas as abas e ficam memorizados no navegador.
+
+### 4. Publique para a equipe
+O board pode rodar em um servidor interno (IIS ou Docker) ou na nuvem (Azure App Service, VM com Docker etc.). O servidor só precisa alcançar o GLPI e estar atrás de **HTTPS**. O passo a passo completo está em [docs/INSTALACAO.md](docs/INSTALACAO.md#5-publicar-acesso-de-qualquer-computador).
+
+---
+
+## Funcionalidades futuras
+
+### Planejadas
+
+| # | Funcionalidade | Descrição | Ganho esperado |
+|---|---|---|---|
+| 1 | **Login integrado pelo GLPI** | Cada pessoa entra com o próprio usuário do GLPI (credenciais ou token pessoal), no lugar do login único do board. O que cada um vê respeita o perfil e as entidades dele no GLPI. | Acesso individual e auditável, sem senha compartilhada. Cada técnico vê o próprio painel e o gestor vê tudo. |
+| 2 | **Criação de chamados** | Abrir chamados direto pelo board, com entidade, categoria, requerente, urgência e descrição, gravados no GLPI pela API. | Registro mais rápido, inclusive de demandas que chegam por telefone ou em reunião, sem trocar de sistema. |
+| 3 | **Fila e técnico definidos automaticamente pela categoria** | Regras *categoria → fila (grupo) → técnico*. Quando um chamado chega, o board escolhe o técnico considerando quem domina o tema (matriz de cobertura), a carga atual e a disponibilidade no Planejamento, e grava a atribuição no GLPI. | Fim da triagem manual, menor tempo até o início do atendimento e distribuição equilibrada da carga. |
+
+### Em avaliação (sugestões)
+
+| Funcionalidade | Descrição |
+|---|---|
+| **Alertas de SLA** | Aviso por e-mail ou Microsoft Teams quando um chamado está perto de estourar o prazo ou está sem técnico há muito tempo. |
+| **Sugestão de categoria** | Usar a mesma inferência dos relatórios para sugerir a categoria correta no momento da abertura e na revisão dos chamados mal classificados. |
+| **Capacidade da equipe** | Comparar horas planejadas com horas disponíveis por técnico (férias, plantões) e alertar sobrecarga antes que ela aconteça. |
+| **Relatórios agendados** | Envio automático do resumo semanal ou mensal (Desempenho e SLA) para gestores e clientes. |
+| **Problemas recorrentes → Problema ITIL** | Detectar grupos de chamados repetidos no mesmo cliente e tema e propor a abertura de um *Problema* no GLPI. |
+
+---
+
+## Arquitetura e segurança
+
 ```
-Para rodar o app fora do Docker (desenvolvimento), suba só o banco com `docker compose up -d mysql`. O app usa `MYSQL_DB_HOST=localhost` e `MYSQL_DB_PORT=3316`.
-
-> Histórico: até 19/11/2026 o banco era PostgreSQL. Os dados foram migrados para o MySQL e o PostgreSQL foi retirado; o último backup dele está em `backups/pg-final-*` (o volume antigo `itsm-board-plan-data` foi mantido, sem uso).
-
-**Docker sem compose** (com um MySQL externo via `MYSQL_DB_*`):
-```bash
-docker build -t glpi-board .
+Navegador ──HTTPS + login──► ASP.NET Core 8 (React + /api) ──HTTPS + tokens──► GLPI /apirest.php
+                                       │
+                                       └──► MySQL 8.4 (planejamento e projetos)
 ```
-```bash
-docker run -d -p 8080:8080 --env-file .env --restart unless-stopped glpi-board
-```
-Coloque um proxy com HTTPS na frente (Nginx, Caddy, Traefik ou o TLS do próprio provedor). O login Basic exige HTTPS.
 
-**IIS:** rode `dotnet publish -c Release -o publish` depois de buildar o front. Instale o *ASP.NET Core Hosting Bundle 8* e defina as variáveis em *Configuration Editor → system.webServer/aspNetCore → environmentVariables* ou nas variáveis do App Pool.
+- **Backend:** ASP.NET Core 8 (C#, minimal API). **Frontend:** React 19 + Vite + TypeScript. **Banco:** MySQL 8.4, usado só para os dados próprios do board (planejamento e projetos).
+- Os tokens do GLPI ficam **apenas no servidor**; o navegador nunca os recebe.
+- A leitura de chamados é **somente leitura**. Escrita no GLPI acontece apenas na integração de projetos, por ação explícita do usuário.
+- O board exige login e HTTPS. As alterações pela API exigem um cabeçalho específico, como proteção contra CSRF.
+- Segredos ficam no `.env` (fora do versionamento) ou no cofre de segredos da hospedagem.
+- Cabeçalhos de segurança (CSP, X-Frame-Options, nosniff) vêm ativados.
 
-**Azure App Service:** use o deploy do container ou do `publish`. Cadastre as variáveis em *Configuração → Configurações de aplicativo* (ou referências ao Key Vault).
+---
 
-## 6. Gestão de Projetos
+## Documentação técnica
 
-O título da página ("Board de chamados · ITSM") é um botão que troca de sistema. A outra opção é **Gestão de Projetos** (`#pm`).
+O guia completo está em **[docs/INSTALACAO.md](docs/INSTALACAO.md)**:
+- regras de cada coluna do board e decisões de interpretação do GLPI;
+- variáveis de ambiente e boas práticas de segurança;
+- execução local, publicação (Docker, IIS, Azure), backup e restauração;
+- detalhes do módulo de Gestão de Projetos;
+- referência das rotas da API.
 
-**Projetos**
-- Cada projeto tem nome, entidade do ITSM, início, fim e descrição.
-- A lista pode ser filtrada por entidade e mostra o realizado × previsto de cada projeto.
+---
 
-**Aba Tarefas**
-- O grid tem Nº, título, descrição, status, responsáveis, as quatro datas (início e fim, planejado e executado), dependências, realizado × previsto, desvio, checklist, anexos, ID no ITSM e ações.
-- Teclado: `Enter` cria a próxima tarefa, `Tab` transforma a tarefa em subtarefa da de cima e `Shift+Tab` sobe um nível. São no máximo 3 níveis.
-- Tarefa com subtarefas vira tarefa-resumo: fica em negrito extra e tem datas, status e % calculados das subtarefas.
-- Status: são os estados de projeto do ITSM (Novo, Processando, Fechado).
-  - Preencher a conclusão fecha a tarefa.
-  - Fechar a tarefa preenche a conclusão.
-  - A tarefa só fecha com o checklist completo.
-- Dependências: Término→Início (inicia após o término), Início→Início (em paralelo), Término→Término (pode iniciar antes) e Início→Término, com folga em dias.
-  - Uma dependência não respeitada aparece em vermelho.
-  - "Ajustar datas" empurra o planejado da tarefa até respeitar as dependências.
-  - Ciclos são bloqueados.
-- **Marcos**: nome, objetivo, data meta e tarefas associadas. A situação (no prazo, em risco, atrasado ou atingido) é calculada a partir das tarefas.
+## Contribuindo
 
-**Planejado × realizado**
-- O previsto para hoje cresce de forma linear entre o início e o fim planejados.
-- O realizado é 100% para tarefas concluídas. Nas demais, vem do checklist ou do % informado.
-- A tarefa-resumo e o projeto ponderam esses valores pela duração planejada das tarefas.
-
-**Aba Gráfico de Gantt**
-- A coluna Nº/tarefa fica fixa e a escala tem meses e dias, até 24 meses depois do fim do projeto.
-- Cada tarefa tem duas barras: em cima o planejado (a parte escura é o % realizado) e embaixo o executado (verde quando concluída, vermelho quando atrasada).
-- O gráfico mostra também tarefas-resumo, marcos, setas de dependência, a linha de hoje e o início/fim do projeto.
-- **Exportar PDF** gera um A3 paisagem vetorial, com a escala ajustada ao período do projeto e cabeçalho repetido em cada página.
-
-**ITSM (GLPI, módulo Projetos)**
-- **Associar ao ITSM** cria a *tarefa de projeto* no GLPI. Se ainda não existirem lá, cria antes o projeto e as tarefas-pai.
-- A criação inclui a equipe (responsáveis) e as dependências (`ProjectTaskLink`).
-- **Sincronizar** compara os dois lados:
-  - Se a tarefa mudou aqui desde a última sincronização, envia as mudanças ao ITSM. Se mudou nos dois lados, a versão daqui prevalece.
-  - Se mudou só no ITSM (o `date_mod` mudou), traz as mudanças do ITSM.
-- Excluir algo aqui **não** apaga nada no ITSM.
-
-Os dados ficam no mesmo MySQL do Planejamento (tabelas `pm_*`, criadas automaticamente). Os anexos ficam no banco, com até 20 MB por arquivo, e entram no `mysqldump`.
-
-## 7. Endpoints
-- `GET /api/board`: snapshot em cache (`BOARD_CACHE_SECONDS`).
-- `GET /api/reports/sla?from=AAAA-MM&to=AAAA-MM`: tickets abertos no período (até 12 meses) com prazos de SLA, flags "excedido" do ITSM e tempos (assumido, solução útil, pendente, lançado em tarefas). Base da aba **Relatórios SLA**.
-- `GET /api/plan?month=AAAA-MM`: itens planejados do mês (técnico × dia), mais a contagem de dias planejados por ticket.
-- `POST /api/plan` `{techId, techName, ticketId, title, day}`: planeja um ticket num dia. `PUT /api/plan/{id}` `{day}` move o item. `DELETE /api/plan/{id}` remove o item.
-- `GET /api/plan/health`: diz se o banco do planejamento está configurado e acessível.
-- `/api/pm/*`: gestão de projetos.
-  - Leitura: `meta`, `projects`.
-  - Tarefas: `tasks/{id}` (PATCH parcial), `indent`, `outdent`, `move`, `align`.
-  - Itens das tarefas: `dependencies`, `checklist`, `attachments`, `milestones`.
-  - ITSM: `glpi/link`, `glpi/sync`.
-  - Toda alteração exige o cabeçalho `X-Requested-With: board`, como proteção contra CSRF.
-- `POST /api/board/refresh`: botão **Ressincronizar**. Força a leitura no GLPI, com no máximo 1 leitura a cada `BOARD_REFRESH_MIN_INTERVAL_SECONDS` para proteger o GLPI.
-- `GET /api/config-status`: diagnóstico da configuração (sem valores).
-- `GET /healthz`: health check público.
-
-Se o GLPI falhar, o board continua mostrando a **última leitura válida** e exibe o erro com a data e a hora da falha.
+Sugestões e correções são bem-vindas: abra uma *issue* descrevendo o cenário ou envie um *pull request*. Para mudanças maiores, descreva a proposta numa *issue* antes.
