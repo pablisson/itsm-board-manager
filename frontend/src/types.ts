@@ -71,3 +71,20 @@ export interface TechReport {
   people: PersonRef[]; tickets: TechReportTicket[]; trainingTickets: number; warnings: string[]
 }
 export interface TechReportResponse { report: TechReport | null; error: string | null; throttledSeconds?: number | null }
+
+/* ---------- análise por cliente ---------- */
+export type CancelKind = 'duplicidade' | 'sem_retorno' | 'solicitante' | 'atendimento'
+export interface ClientTicket {
+  id: number; title: string; status: number; statusLabel: string; priority: number | null
+  entity: string | null; category: string | null; url: string; techIds: number[]; requesterIds: number[]
+  openedAtUtc: string | null; updatedAtUtc: string | null; solvedAtUtc: string | null
+  ttoDueUtc: string | null; ttrDueUtc: string | null; ttoLate: boolean; ttrLate: boolean
+  takeDelaySec: number | null; solveDelaySec: number | null; solutionType: string | null
+  cancel: CancelKind | null; duplicateOf: number | null; reopenedInPeriod: number; reopenedTotal: number
+  inBacklog: boolean; inOpened: boolean; inSolved: boolean
+}
+export interface ClientReport {
+  generatedAtUtc: string; durationMs: number; from: string; to: string; days: number
+  people: PersonRef[]; tickets: ClientTicket[]; warnings: string[]
+}
+export interface ClientReportResponse { report: ClientReport | null; error: string | null; throttledSeconds?: number | null }

@@ -20,6 +20,7 @@ builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<TimelineService>();
 builder.Services.AddSingleton<SlaReportService>();
 builder.Services.AddSingleton<TechReportService>();
+builder.Services.AddSingleton<ClientReportService>();
 builder.Services.AddSingleton<GlpiBoard.Api.Data.AppDb>();
 builder.Services.AddSingleton<PlanStore>();
 builder.Services.AddSingleton<SolvedImportService>();
@@ -128,6 +129,16 @@ app.MapGet("/api/reports/technicians", async (TechReportService r, string? from,
     if (f is null || t is null || t < f || t.Value.DayNumber - f.Value.DayNumber >= TechReportService.MaxDays)
         return Results.BadRequest(new { errors = new[] { $"Período inválido (use from/to = AAAA-MM-DD, até {TechReportService.MaxDays} dias)." } });
     return Results.Ok(await r.GetAsync(f.Value, t.Value, refresh == true, ct));
+});
+
+// Por cliente: fila atual + abertos/solucionados nos últimos N dias (7 a 90; padrão 15)
+app.MapGet("/api/reports/clients", async (ClientReportService r, int? days, bool? refresh, CancellationToken ct) =>
+{
+    if (settings.Validate() is { Count: > 0 } errs) return Results.BadRequest(new { errors = errs });
+    var d = days ?? 15;
+    if (d < ClientReportService.MinDays || d > ClientReportService.MaxDays)
+        return Results.BadRequest(new { errors = new[] { $"Período inválido (days entre {ClientReportService.MinDays} e {ClientReportService.MaxDays})." } });
+    return Results.Ok(await r.GetAsync(d, refresh == true, ct));
 });
 
 app.MapGet("/api/timeline",async (TimelineService tl, int tech, CancellationToken ct) =>

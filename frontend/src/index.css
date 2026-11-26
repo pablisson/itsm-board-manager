@@ -562,3 +562,37 @@ td.tr-cell:hover { outline: 2px solid var(--viz-qty); outline-offset: -1px; }
 .tr-top { margin-bottom: 10px; }
 @media (max-width: 700px) { .tr-plist li { grid-template-columns: 1fr 40px; } .tr-tks { grid-column: 1 / -1; } .tr-pick { max-width: 100%; } }
 .grid td.tr-wrap { white-space: normal; max-width: none; }
+
+/* ---------- Por cliente ---------- */
+.cl-flabel { font-size: 12px; color: var(--muted); }
+.cl-kpis { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.cl-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin: -4px 0 8px; }
+.cl-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.cl-legend .cl-bar { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.cl-day { flex: 1 1 0; height: 100%; min-width: 0; display: flex; align-items: flex-end; justify-content: center; gap: 2px; border-radius: 4px 4px 0 0; }
+.cl-day:hover { background: var(--surface-2); }
+.cl-day .cl-bar { width: min(10px, 42%); border-radius: 4px 4px 0 0; }
+.cl-bar.in { background: var(--viz-tto); } .cl-bar.out { background: var(--viz-ttr); }
+.cl-sort { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; white-space: nowrap; }
+.cl-sort:hover { color: var(--text); }
+.cl-sum tbody tr { cursor: pointer; }
+.cl-sum tbody tr.on { background: var(--blue-bg); }
+.cl-sum td.num .link, .cl-sum td.left .link { font-variant-numeric: tabular-nums; }
+.cl-bad, .cl-bad .link { color: var(--red); font-weight: 600; }
+.cl-up { color: var(--amber); font-weight: 600; }
+.cl-risk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; border-radius: 999px; padding: 1px 8px 1px 2px; background: var(--gray-bg); color: var(--muted); cursor: default; }
+.cl-risk-n { display: inline-grid; place-items: center; min-width: 26px; height: 18px; border-radius: 999px; padding: 0 5px; background: var(--surface); font-variant-numeric: tabular-nums; }
+.cl-risk.crit { background: var(--red-bg); color: var(--red); } .cl-risk.warn { background: var(--amber-bg); color: var(--amber); } .cl-risk.ok { background: var(--green-bg); color: var(--green); }
+.kpi-value .cl-risk { font-size: 15px; padding: 3px 12px 3px 3px; } .kpi-value .cl-risk-n { min-width: 34px; height: 26px; }
+.cl-chip { border: 0; cursor: pointer; font: inherit; font-size: 12px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-note { margin: 10px 0 0; }
+.cl-note .pill { margin-left: 0; }
+.cl-tabs { margin: 4px 0 10px; }
+.cl-tabs button b { margin-left: 3px; font-variant-numeric: tabular-nums; }
+.cl-tks td.cl-title { min-width: 240px; max-width: 420px; }
+.cl-dups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.cl-dups li { display: flex; flex-direction: column; gap: 3px; padding: 8px 4px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.cl-dups li:last-child { border-bottom: 0; }
+.cl-dups .pill { align-self: flex-start; margin: 0; }
+.cl-pair { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cl-role { display: inline-block; min-width: 72px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; margin-right: 4px; }

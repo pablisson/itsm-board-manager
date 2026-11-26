@@ -203,7 +203,7 @@ public sealed class TechReportService(GlpiClient glpi, BoardSettings settings, I
     }
 
     /// <summary>Nomes de usuários: lista completa (cache de 6 h) + busca individual dos que faltarem (ex.: excluídos).</summary>
-    private async Task<Dictionary<int, string>> NamesAsync(GlpiClient.Session session, HashSet<int> ids, bool force, ConcurrentBag<string> warnings, CancellationToken ct)
+    internal async Task<Dictionary<int, string>> NamesAsync(GlpiClient.Session session, HashSet<int> ids, bool force, ConcurrentBag<string> warnings, CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
         if (_users is null || force || now - _usersAt > ModelTtl)
